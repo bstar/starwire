@@ -127,11 +127,13 @@ mod tests {
             kind_of("https://example.org/posts/one"),
             Target::Browser(_)
         ));
-        assert!(matches!(
-            kind_of("https://example.org/mp4-considered-harmful"),
-            Target::Browser(_),
+        assert!(
+            matches!(
+                kind_of("https://example.org/mp4-considered-harmful"),
+                Target::Browser(_)
+            ),
             "the extension has to be the extension"
-        ));
+        );
     }
 
     #[test]

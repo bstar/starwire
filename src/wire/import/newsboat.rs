@@ -34,7 +34,10 @@ pub enum UrlsLine {
     Comment(String),
     Feed(FeedLine),
     /// A line that is not a feed to fetch, with the reason it was left out.
-    Skipped { raw: String, reason: &'static str },
+    Skipped {
+        raw: String,
+        reason: &'static str,
+    },
 }
 
 /// A feed line, taken apart.
@@ -170,7 +173,9 @@ fn tokenise(line: &str) -> Vec<String> {
 /// A token, quoted if it needs to be.
 fn render_token(token: &str) -> String {
     let needs_quotes = token.is_empty()
-        || token.chars().any(|c| c.is_whitespace() || c == '"' || c == '\\');
+        || token
+            .chars()
+            .any(|c| c.is_whitespace() || c == '"' || c == '\\');
     if !needs_quotes {
         return token.to_string();
     }
@@ -236,7 +241,9 @@ pub fn read_cache(path: &Path) -> Result<CacheRows> {
     anyhow::ensure!(path.exists(), "{} is not there", path.display());
     let uri = format!(
         "file:{}?immutable=1&mode=ro",
-        path.to_string_lossy().replace('?', "%3f").replace('#', "%23")
+        path.to_string_lossy()
+            .replace('?', "%3f")
+            .replace('#', "%23")
     );
     let conn = rusqlite::Connection::open_with_flags(
         &uri,
@@ -260,7 +267,10 @@ pub fn read_cache_conn(conn: &rusqlite::Connection) -> Result<CacheRows> {
         })?;
         for row in rows {
             let (url, title) = row?;
-            if let Some(title) = title.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
+            if let Some(title) = title
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+            {
                 titles.insert(url, title);
             }
         }
@@ -459,13 +469,31 @@ mod tests {
             )
             .unwrap();
         insert
-            .execute(rusqlite::params!["g1", "https://example.org/1", "https://example.org/feed.xml", 0, 0])
+            .execute(rusqlite::params![
+                "g1",
+                "https://example.org/1",
+                "https://example.org/feed.xml",
+                0,
+                0
+            ])
             .unwrap();
         insert
-            .execute(rusqlite::params!["g2", "https://example.org/2", "https://example.org/feed.xml", 1, 0])
+            .execute(rusqlite::params![
+                "g2",
+                "https://example.org/2",
+                "https://example.org/feed.xml",
+                1,
+                0
+            ])
             .unwrap();
         insert
-            .execute(rusqlite::params!["g3", "https://example.org/3", "https://example.org/feed.xml", 0, 1])
+            .execute(rusqlite::params![
+                "g3",
+                "https://example.org/3",
+                "https://example.org/feed.xml",
+                0,
+                1
+            ])
             .unwrap();
         drop(insert);
         conn
@@ -476,7 +504,9 @@ mod tests {
         let conn = newsboat_cache();
         let got = read_cache_conn(&conn).unwrap();
         assert_eq!(
-            got.titles.get("https://example.org/feed.xml").map(String::as_str),
+            got.titles
+                .get("https://example.org/feed.xml")
+                .map(String::as_str),
             Some("Example Journal")
         );
         assert_eq!(got.read.len(), 1, "only the unread=0, undeleted row");
@@ -525,13 +555,16 @@ mod tests {
         /// quote, a backslash or a `~`.
         #[test]
         fn a_feed_line_survives_being_written_out_and_read_back(
-            url in "[a-z][a-z0-9:/._-]{0,40}",
+            path in "[a-z0-9._/~!-]{0,40}",
             hidden: bool,
             title in proptest::option::of("[^\\x00-\\x1f]{0,30}"),
             tags in proptest::collection::vec("[^\\x00-\\x1f]{0,20}", 0..4),
         ) {
             let line = UrlsLine::Feed(FeedLine {
-                url,
+                // A scheme, so that the generator cannot produce `query:`,
+                // `filter:` or `exec:` -- which are lines this deliberately
+                // does not round trip, because they are not feeds.
+                url: format!("https://example.org/{path}"),
                 hidden,
                 // An all-whitespace or empty title is not a title: newsboat
                 // would drop the `~` token as empty, and so does this.
@@ -539,7 +572,10 @@ mod tests {
                 tags: tags
                     .into_iter()
                     .map(|t| t.trim().to_string())
-                    .filter(|t| !t.is_empty())
+                    // A token beginning with `~` is a title, not a tag, in
+                    // newsboat's format as well as in this parser. It is an
+                    // ambiguity in the format rather than one this introduces.
+                    .filter(|t| !t.is_empty() && !t.starts_with('~'))
                     .collect(),
             });
             let rendered = render_line(&line);

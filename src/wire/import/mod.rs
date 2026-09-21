@@ -169,8 +169,7 @@ pub fn apply_plan(db: &Db, plan: &ImportPlan) -> Result<ImportReport> {
         skipped: plan.skipped.clone(),
         ..ImportReport::default()
     };
-    let mut folders: std::collections::HashMap<String, FolderId> =
-        std::collections::HashMap::new();
+    let mut folders: std::collections::HashMap<String, FolderId> = std::collections::HashMap::new();
 
     for planned in &plan.feeds {
         let folder = match &planned.folder {
@@ -255,9 +254,8 @@ mod tests {
         for feed in &plan.feeds {
             if feed.kind == FeedKind::Youtube {
                 assert!(
-                    feed.url.starts_with(
-                        "https://www.youtube.com/feeds/videos.xml?channel_id="
-                    ),
+                    feed.url
+                        .starts_with("https://www.youtube.com/feeds/videos.xml?channel_id="),
                     "{}",
                     feed.url
                 );
@@ -330,7 +328,11 @@ mod tests {
         );
         assert_eq!(plan.feeds.len(), 1);
         assert_eq!(plan.skipped.len(), 1);
-        assert!(plan.skipped[0].1.contains("saved search"), "{:?}", plan.skipped);
+        assert!(
+            plan.skipped[0].1.contains("saved search"),
+            "{:?}",
+            plan.skipped
+        );
     }
 
     #[test]

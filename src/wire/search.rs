@@ -53,7 +53,9 @@ pub fn filter(query: &str, rows: &[EntryRow]) -> Vec<usize> {
         .filter_map(|(index, haystack)| {
             let mut buf = Vec::new();
             let utf32 = nucleo_matcher::Utf32Str::new(haystack, &mut buf);
-            pattern.score(utf32, &mut matcher).map(|score| (score, index))
+            pattern
+                .score(utf32, &mut matcher)
+                .map(|score| (score, index))
         })
         .collect();
 
@@ -88,9 +90,19 @@ mod tests {
 
     fn rows() -> Vec<EntryRow> {
         vec![
-            row(1, "Why the borrow checker says no", "Example Journal", Some("Jane Example")),
+            row(
+                1,
+                "Why the borrow checker says no",
+                "Example Journal",
+                Some("Jane Example"),
+            ),
             row(2, "A new release of Phoronix Test Suite", "Phoronix", None),
-            row(3, "Lifetimes are not about lifetime", "Example Journal", None),
+            row(
+                3,
+                "Lifetimes are not about lifetime",
+                "Example Journal",
+                None,
+            ),
             row(4, "Something else entirely", "Lobsters", None),
         ]
     }

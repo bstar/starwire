@@ -41,15 +41,26 @@ fn walk(outline: &opml::Outline, folder: Option<&str>, plan: &mut ImportPlan) {
         .or(Some(outline.text.trim()))
         .filter(|t| !t.is_empty());
 
-    match outline.xml_url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+    match outline
+        .xml_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+    {
         Some(url) => match crate::wire::youtube::canonicalise(url) {
             Ok(canonical) => plan.feeds.push(PlannedFeed {
                 url: canonical.url,
                 source_url: url.to_string(),
                 kind: canonical.kind,
                 // The outline's own title wins over one the URL carried:
-                // somebody exported this list after naming things.
-                title: name.map(str::to_string).or(canonical.title),
+                // somebody exported this list after naming things. An
+                // outline whose `text` is simply its own address is not a
+                // name -- that is what a reader writes when it has to fill
+                // the attribute and has nothing to put in it.
+                title: name
+                    .filter(|n| *n != url)
+                    .map(str::to_string)
+                    .or(canonical.title),
                 folder: folder.map(str::to_string),
                 channel: canonical.channel,
             }),
@@ -123,10 +134,19 @@ pub fn export(feeds: &[FeedRow], folders: &[Folder]) -> Result<String> {
 }
 
 fn outline_for(feed: &FeedRow) -> opml::Outline {
-    let title = feed.display_title().to_string();
+    // A feed nothing has named yet has no title to write. `text` still has to
+    // be something -- the specification requires the attribute -- so it gets
+    // the URL, but `title` is left off, and `walk` ignores a `text` that is
+    // the URL. Without that pair, exporting and re-importing an unfetched
+    // list turns every feed's *name* into its address for ever.
+    let named = feed
+        .custom_title
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .or(feed.title.as_deref().filter(|s| !s.is_empty()));
     opml::Outline {
-        text: title.clone(),
-        title: Some(title),
+        text: named.unwrap_or(&feed.url).to_string(),
+        title: named.map(str::to_string),
         r#type: Some("rss".into()),
         xml_url: Some(feed.url.clone()),
         html_url: feed.site_url.clone(),
@@ -167,7 +187,9 @@ mod tests {
         let plan = parse(&text).unwrap();
         assert!(plan.feeds.len() >= 3, "{:?}", plan.feeds);
         assert!(
-            plan.feeds.iter().any(|f| f.folder.as_deref() == Some("Tech")),
+            plan.feeds
+                .iter()
+                .any(|f| f.folder.as_deref() == Some("Tech")),
             "{:?}",
             plan.feeds
         );
@@ -202,6 +224,18 @@ mod tests {
         assert_eq!(plan.feeds.len(), 1);
         assert_eq!(plan.skipped.len(), 1);
         assert!(plan.skipped[0].0.starts_with("ftp://"));
+    }
+
+    #[test]
+    fn a_feed_nobody_has_named_does_not_come_back_named_after_its_own_url() {
+        let feeds = vec![FeedRow {
+            title: None,
+            ..feed(1, "https://a.example/feed", "ignored", None)
+        }];
+        let xml = export(&feeds, &[]).unwrap();
+        let plan = parse(&xml).unwrap();
+        assert_eq!(plan.feeds.len(), 1);
+        assert_eq!(plan.feeds[0].title, None, "an address is not a name: {xml}");
     }
 
     #[test]
