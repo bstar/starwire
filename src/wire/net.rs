@@ -40,6 +40,11 @@ pub struct RequestOptions {
     /// than a truncation: half a feed is not a feed, and half a page extracts
     /// to nonsense.
     pub max_bytes: u64,
+    /// A timeout for this request alone, where it wants one longer or shorter
+    /// than the agent's. A page is not a feed: forty-one feeds want to be
+    /// quick about it, and one article behind a redirect wrapper on a site
+    /// that renders it on demand is allowed to take longer.
+    pub timeout_secs: Option<u64>,
 }
 
 impl RequestOptions {
@@ -70,6 +75,12 @@ impl RequestOptions {
     pub fn conditional(mut self, etag: Option<String>, last_modified: Option<String>) -> Self {
         self.etag = etag;
         self.last_modified = last_modified;
+        self
+    }
+
+    /// Give this one request its own timeout.
+    pub fn timeout(mut self, secs: u64) -> Self {
+        self.timeout_secs = Some(secs);
         self
     }
 }
@@ -193,6 +204,14 @@ impl Http for Live {
             let lease = self.politeness.lease(target.host_str().unwrap_or(""));
 
             let mut req = self.agent.get(target.as_str());
+            if let Some(secs) = options.timeout_secs {
+                // Per request rather than per agent, because there is one
+                // agent and one connection pool for feeds and pages both.
+                req = req
+                    .config()
+                    .timeout_global(Some(Duration::from_secs(secs.max(1))))
+                    .build();
+            }
             if let Some(accept) = &options.accept {
                 req = req.header("Accept", accept);
             }
@@ -726,6 +745,11 @@ mod tests {
         assert_eq!(feed.max_bytes, 1024);
         let page = RequestOptions::page(2048);
         assert!(page.accept.as_deref().unwrap().starts_with("text/html"));
+        assert_eq!(
+            page.timeout_secs, None,
+            "the agent's own timeout, unless asked"
+        );
+        assert_eq!(page.timeout(30).timeout_secs, Some(30));
 
         let conditional = RequestOptions::feed(1).conditional(Some("\"e\"".into()), None);
         assert_eq!(conditional.etag.as_deref(), Some("\"e\""));

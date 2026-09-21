@@ -133,6 +133,8 @@ pub struct ArticleResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     pub max_article_bytes: u64,
+    /// The whole of one page request, in seconds.
+    pub timeout_secs: u64,
     pub max_markdown_bytes: usize,
     pub images: bool,
     /// The first delay after a transient failure, in seconds. Doubled per
@@ -147,6 +149,7 @@ impl Default for Limits {
         let cfg = super::ArticlesConfig::default();
         Self {
             max_article_bytes: cfg.max_article_bytes,
+            timeout_secs: cfg.timeout_secs,
             max_markdown_bytes: cfg.max_markdown_bytes,
             images: cfg.images,
             retry_base_secs: super::FetchConfig::default().refresh_minutes as i64 * 60,
@@ -154,10 +157,18 @@ impl Default for Limits {
     }
 }
 
+impl Limits {
+    /// What one page request asks for.
+    fn request(&self) -> RequestOptions {
+        RequestOptions::page(self.max_article_bytes).timeout(self.timeout_secs)
+    }
+}
+
 impl From<&super::ArticlesConfig> for Limits {
     fn from(cfg: &super::ArticlesConfig) -> Self {
         Self {
             max_article_bytes: cfg.max_article_bytes,
+            timeout_secs: cfg.timeout_secs,
             max_markdown_bytes: cfg.max_markdown_bytes,
             images: cfg.images,
             ..Self::default()
@@ -178,7 +189,7 @@ impl From<&super::ArticlesConfig> for Limits {
 pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> {
     let parsed = Url::parse(url).map_err(|e| anyhow::anyhow!("{url} is not a URL: {e}"))?;
 
-    let response = match http.get(&parsed, &RequestOptions::page(limits.max_article_bytes)) {
+    let response = match http.get(&parsed, &limits.request()) {
         Ok(r) => r,
         Err(e) => {
             let retry = transport_is_transient(&e).then_some(limits.retry_base_secs);
@@ -327,7 +338,7 @@ fn follow_pages(http: &dyn Http, first_html: &str, first_url: &Url, limits: Limi
         if seen.contains(&next) {
             break;
         }
-        let Ok(response) = http.get(&next, &RequestOptions::page(limits.max_article_bytes)) else {
+        let Ok(response) = http.get(&next, &limits.request()) else {
             break;
         };
         if !response.is_ok() {
@@ -810,12 +821,14 @@ mod tests {
     fn the_limits_come_from_the_config_rather_than_from_a_second_set_of_numbers() {
         let cfg = super::super::ArticlesConfig {
             max_article_bytes: 7,
+            timeout_secs: 45,
             max_markdown_bytes: 11,
             images: false,
             ..super::super::ArticlesConfig::default()
         };
         let limits = Limits::from(&cfg);
         assert_eq!(limits.max_article_bytes, 7);
+        assert_eq!(limits.timeout_secs, 45);
         assert_eq!(limits.max_markdown_bytes, 11);
         assert!(!limits.images);
     }

@@ -121,6 +121,7 @@ impl Default for Fetch {
 pub struct Articles {
     pub extract: bool,
     pub max_article_bytes: u64,
+    pub timeout_secs: u64,
     pub max_markdown_bytes: usize,
     pub keep_days: u32,
     pub max_entries_per_feed: usize,
@@ -134,6 +135,7 @@ impl Default for Articles {
         Self {
             extract: core.extract,
             max_article_bytes: core.max_article_bytes,
+            timeout_secs: core.timeout_secs,
             max_markdown_bytes: core.max_markdown_bytes,
             keep_days: core.keep_days,
             max_entries_per_feed: core.max_entries_per_feed,
@@ -229,6 +231,7 @@ impl Config {
             articles: wire::ArticlesConfig {
                 extract: self.articles.extract,
                 max_article_bytes: self.articles.max_article_bytes.max(1024),
+                timeout_secs: self.articles.timeout_secs.max(1),
                 max_markdown_bytes: self.articles.max_markdown_bytes.max(256),
                 keep_days: self.articles.keep_days,
                 max_entries_per_feed: self.articles.max_entries_per_feed,
@@ -309,6 +312,10 @@ refresh_on_start = true
 extract = true
 # The most HTML downloaded for one article.
 max_article_bytes = 2097152
+# The whole of one page request. Longer than [fetch] timeout_secs on purpose:
+# a feed is a file the server already has, and an article is often rendered
+# when it is asked for.
+timeout_secs = 30
 # Markdown longer than this is cut at a paragraph boundary.
 max_markdown_bytes = 524288
 # Entries older than this are swept. Starred entries are always kept.
@@ -413,6 +420,7 @@ mod tests {
             articles: Articles {
                 extract: false,
                 max_article_bytes: 4096,
+                timeout_secs: 45,
                 max_markdown_bytes: 1024,
                 keep_days: 7,
                 max_entries_per_feed: 50,
@@ -442,6 +450,7 @@ mod tests {
 
         assert!(!core.articles.extract);
         assert_eq!(core.articles.max_article_bytes, 4096);
+        assert_eq!(core.articles.timeout_secs, 45);
         assert_eq!(core.articles.max_markdown_bytes, 1024);
         assert_eq!(core.articles.keep_days, 7);
         assert_eq!(core.articles.max_entries_per_feed, 50);
@@ -464,11 +473,13 @@ mod tests {
         let mut cfg = Config::default();
         cfg.fetch.parallel = 0;
         cfg.fetch.timeout_secs = 0;
+        cfg.articles.timeout_secs = 0;
         cfg.articles.page_size = 0;
         cfg.youtube.yt_dlp = "   ".into();
         let core = cfg.core();
         assert_eq!(core.fetch.parallel, 1, "a refresh needs somewhere to run");
         assert_eq!(core.fetch.timeout_secs, 1);
+        assert_eq!(core.articles.timeout_secs, 1);
         assert_eq!(core.articles.page_size, 10);
         assert_eq!(core.youtube.yt_dlp, "yt-dlp");
 

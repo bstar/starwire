@@ -62,6 +62,7 @@ pub struct RuntimeSettings {
     pub parallel: usize,
     pub max_feed_bytes: u64,
     pub max_article_bytes: u64,
+    pub article_timeout_secs: u64,
     pub max_markdown_bytes: usize,
 }
 
@@ -77,6 +78,7 @@ impl From<&WireConfig> for RuntimeSettings {
             parallel: cfg.fetch.parallel.max(1),
             max_feed_bytes: cfg.fetch.max_feed_bytes,
             max_article_bytes: cfg.articles.max_article_bytes,
+            article_timeout_secs: cfg.articles.timeout_secs,
             max_markdown_bytes: cfg.articles.max_markdown_bytes,
         }
     }
@@ -89,6 +91,7 @@ impl RuntimeSettings {
     pub fn limits(&self) -> Limits {
         Limits {
             max_article_bytes: self.max_article_bytes,
+            timeout_secs: self.article_timeout_secs,
             max_markdown_bytes: self.max_markdown_bytes,
             images: self.images,
             retry_base_secs: self.refresh_minutes as i64 * 60,

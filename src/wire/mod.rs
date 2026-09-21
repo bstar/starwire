@@ -120,6 +120,12 @@ pub struct ArticlesConfig {
     pub extract: bool,
     /// The most HTML downloaded for one article.
     pub max_article_bytes: u64,
+    /// The whole of one page request, connection and body included. Longer
+    /// than a feed's, because a feed is a file a server has already made and
+    /// an article is often rendered when it is asked for -- six of the
+    /// reference database's failures were timeouts on heavy pages behind
+    /// redirect wrappers.
+    pub timeout_secs: u64,
     /// Markdown above this is truncated at a paragraph boundary.
     pub max_markdown_bytes: usize,
     /// Entries older than this are swept, unless starred.
@@ -140,6 +146,7 @@ impl Default for ArticlesConfig {
         Self {
             extract: true,
             max_article_bytes: 2_097_152,
+            timeout_secs: 30,
             max_markdown_bytes: 524_288,
             keep_days: 30,
             max_entries_per_feed: 2000,
