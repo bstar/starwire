@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head><title>Four pictures, none of them where it says</title></head>
+<body>
+<article>
+<h1>Four pictures, none of them where it says</h1>
+<p>Every picture on this page is loaded by a script, which is the ordinary
+shape of a news site in 2026 and the reason a converter that reads only
+<code>src</code> comes away with a page of spacers.</p>
+<p><img src="https://example.org/img/spacer.gif"
+        data-src="https://example.org/img/harbour-1280.jpg"
+        alt="A harbour at dusk"></p>
+<p>The second is responsive: five sizes offered, the smallest in
+<code>src</code>.</p>
+<p><img src="https://example.org/img/bridge-320.jpg"
+        srcset="https://example.org/img/bridge-320.jpg 320w,
+                https://example.org/img/bridge.webp 1600w,
+                https://example.org/img/bridge-3840.jpg 3840w"
+        alt="A bridge"></p>
+<p>The third is a picture element, with the fallback last.</p>
+<picture>
+  <source type="image/avif" srcset="https://example.org/img/lighthouse.avif 1200w">
+  <source type="image/webp" srcset="https://example.org/img/lighthouse.jpg 1200w">
+  <img src="https://example.org/img/lighthouse-small.jpg" alt="A lighthouse">
+</picture>
+<p>And the fourth is a blur placeholder with nothing behind it, which is
+worth nothing but its alt text.</p>
+<p><img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAAAAAAALAAAAAABAAEAAAIBRAA="
+        alt="A ferry, eventually"></p>
+</article>
+</body>
+</html>

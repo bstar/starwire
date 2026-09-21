@@ -9,9 +9,12 @@
 //!
 //! 1. [`readability`] finds the article inside the page. Mozilla's algorithm,
 //!    with a gate in front of it that refuses homepages and paywall stubs.
-//! 2. [`markdown`] turns that HTML into CommonMark. The one place `htmd` is
+//! 2. [`images`] makes the pictures' addresses right, which has to happen
+//!    while it is still HTML: `srcset`, `<picture>` and `data-src` are
+//!    attributes the converter does not read.
+//! 3. [`markdown`] turns that HTML into CommonMark. The one place `htmd` is
 //!    named.
-//! 3. [`normalise`] makes the result fit to read and fit to store: blank
+//! 4. [`normalise`] makes the result fit to read and fit to store: blank
 //!    lines collapsed, relative links resolved, size capped at a paragraph
 //!    boundary.
 //!
@@ -39,6 +42,7 @@
 //! attempts at any one entry ever. This fetches pages a person subscribed to
 //! and asked to read, one per entry, once.
 
+pub mod images;
 pub mod markdown;
 pub mod normalise;
 pub mod readability;
@@ -222,7 +226,12 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
         Err(e) => return Ok(failed(final_url.as_str(), e.to_string())),
     };
 
-    let md = match markdown::to_markdown(&extracted.content_html, Some(&final_url)) {
+    // The pictures' addresses, before the converter -- which reads `src` and
+    // nothing else, so a lazy-loaded page would otherwise reduce to a list of
+    // spacers.
+    let content_html = images::sources(&extracted.content_html);
+
+    let md = match markdown::to_markdown(&content_html, Some(&final_url)) {
         Ok(md) => md,
         Err(e) => return Ok(failed(final_url.as_str(), e.to_string())),
     };
@@ -477,6 +486,30 @@ mod tests {
         assert!(
             !md.contains("Subscribe to the newsletter"),
             "the furniture came with it: {md}"
+        );
+    }
+
+    /// The pre-pass, through the whole pipeline: the markdown carries the
+    /// addresses the pictures are really at, not the spacers the page served.
+    #[test]
+    fn a_page_of_lazy_loaded_pictures_comes_out_with_addresses_that_work() {
+        let http = Replay::open(&replay_dir()).unwrap();
+        let got = run(
+            &http,
+            "https://example.org/posts/lazy-pictures",
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(got.status, ArticleStatus::Extracted, "{:?}", got.error);
+        let md = got.markdown.unwrap();
+        assert!(md.contains("harbour-1280.jpg"), "{md}");
+        assert!(md.contains("bridge.webp"), "{md}");
+        assert!(md.contains("lighthouse.jpg"), "{md}");
+        assert!(!md.contains("spacer.gif"), "{md}");
+        assert!(!md.contains("data:"), "{md}");
+        assert!(
+            md.contains("A ferry, eventually"),
+            "the alt text of the one with no address: {md}"
         );
     }
 
