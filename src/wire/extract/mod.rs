@@ -186,7 +186,16 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
                 .unwrap_or(0)
                 .max(limits.retry_base_secs)
         });
-        return Ok(failed(url, format!("the site answered {}", response.status)).retrying(retry));
+        // Named against the host that answered rather than the one that was
+        // asked. Seventeen of the reference failures read `feedpress.me
+        // answered 429` when the request feedpress redirected to was the one
+        // being refused, which sends whoever reads it to the wrong site.
+        let reason = format!(
+            "{} answered {}",
+            host_of(&response.final_url),
+            response.status
+        );
+        return Ok(failed(&response.final_url, reason).retrying(retry));
     }
 
     // A server that answers a request for HTML with a PDF or an image is
@@ -243,6 +252,16 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
     })
 }
 
+/// A URL's host, as an error message should name it, or `the site` when
+/// there is not one to name.
+fn host_of(url: &str) -> String {
+    Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .map(|host| host.strip_prefix("www.").unwrap_or(&host).to_string())
+        .unwrap_or_else(|| "the site".to_string())
+}
+
 fn failed(url: &str, reason: String) -> ArticleResult {
     tracing::debug!(url, reason, "extraction did not yield");
     ArticleResult {
@@ -278,9 +297,15 @@ fn status_is_transient(status: u16) -> bool {
 /// without the queue behind it usually answers. A refused connection, a
 /// certificate that does not verify and a body over the cap are not.
 fn transport_is_transient(error: &super::net::NetError) -> bool {
+    use super::net::NetError;
     match error {
-        super::net::NetError::TooLarge(_) | super::net::NetError::NoReplay(_) => false,
-        super::net::NetError::Transport(text) => {
+        // A login wall and a chain that will not end are both facts about
+        // the address rather than about the minute.
+        NetError::TooLarge(_)
+        | NetError::NoReplay(_)
+        | NetError::Wall(_)
+        | NetError::TooManyRedirects(_) => false,
+        NetError::Transport(text) => {
             let text = text.to_ascii_lowercase();
             text.contains("timeout") || text.contains("timed out")
         }
@@ -468,6 +493,34 @@ mod tests {
         )
         .unwrap();
         assert!(got.markdown.unwrap().len() <= 200);
+    }
+
+    #[test]
+    fn a_failure_names_the_host_that_answered() {
+        assert_eq!(host_of("https://www.nytimes.com/2026/a"), "nytimes.com");
+        assert_eq!(host_of("https://feedpress.me/link/1"), "feedpress.me");
+        assert_eq!(host_of("not a url"), "the site");
+    }
+
+    #[test]
+    fn a_429_and_a_timeout_come_back_and_a_403_does_not() {
+        assert!(status_is_transient(429));
+        assert!(status_is_transient(503));
+        for status in [401, 402, 403, 404, 410, 451] {
+            assert!(!status_is_transient(status), "{status}");
+        }
+
+        use crate::wire::net::NetError;
+        assert!(transport_is_transient(&NetError::Transport(
+            "timeout: global".into()
+        )));
+        assert!(!transport_is_transient(&NetError::TooLarge(1)));
+        assert!(!transport_is_transient(&NetError::Wall(
+            "https://e.org/login".into()
+        )));
+        assert!(!transport_is_transient(&NetError::Transport(
+            "configured for https only: http://e.org/".into()
+        )));
     }
 
     #[test]

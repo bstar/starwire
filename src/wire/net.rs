@@ -6,6 +6,11 @@
 //! files instead, so the whole of fetching, parsing and extraction can be
 //! tested -- and demonstrated, with `starwire --replay` -- without a socket.
 //!
+//! **Redirects are followed here rather than by `ureq`.** A chain is a
+//! sequence of requests to a sequence of hosts, and the politeness in this
+//! file is per host: a loop that takes no lease reaches the second host at
+//! whatever rate the first one answered. See `MAX_REDIRECTS`.
+//!
 //! **https only.** The agent STAR/KIT builds refuses plaintext, and that is
 //! kept rather than relaxed. It costs one thing: `http://old.reddit.com` in a
 //! newsboat `urls` file does not work as typed. The answer is to rewrite
@@ -115,6 +120,10 @@ pub enum NetError {
     NoReplay(String),
     #[error("{0}")]
     Transport(String),
+    #[error("it redirected to a login page at {0}")]
+    Wall(String),
+    #[error("more than {0} redirects")]
+    TooManyRedirects(usize),
 }
 
 /// The one way out.
@@ -132,6 +141,19 @@ pub trait Http: Send + Sync {
     }
 }
 
+/// How many hops a redirect chain may take.
+///
+/// `ureq` follows redirects itself and is told here not to. Its loop takes no
+/// lease, so a wrapper URL that redirects reaches the second host at whatever
+/// rate the first one answered -- which is exactly what the reference
+/// database recorded: seventeen 429s from `archive.is`, every one of them
+/// reached through a `feedpress.me` wrapper with no gap in between, and every
+/// one of them blamed on `feedpress.me` because that was the URL asked for.
+/// Walking the chain here buys three things: a lease per hop, the host that
+/// actually answered in `final_url`, and the chance to stop at a login page
+/// rather than to extract one.
+const MAX_REDIRECTS: usize = 5;
+
 /// The real thing: `ureq` on the agent STAR/KIT configures.
 pub struct Live {
     agent: ureq::Agent,
@@ -142,6 +164,9 @@ impl Live {
     pub fn new(cfg: &super::WireConfig) -> Self {
         let agent: ureq::Agent = starkit::net::builder(&cfg.user_agent())
             .https_only(true)
+            // Zero means ureq returns the 3xx as it is; `get` walks the chain
+            // itself. See MAX_REDIRECTS.
+            .max_redirects(0)
             .timeout_global(Some(Duration::from_secs(cfg.fetch.timeout_secs.max(1))))
             .build()
             .into();
@@ -154,70 +179,116 @@ impl Live {
 
 impl Http for Live {
     fn get(&self, url: &Url, options: &RequestOptions) -> Result<Response, NetError> {
-        let _lease = self.politeness.lease(url.host_str().unwrap_or(""));
+        let mut target = url.clone();
 
-        let mut req = self.agent.get(url.as_str());
-        if let Some(accept) = &options.accept {
-            req = req.header("Accept", accept);
-        }
-        if let Some(etag) = &options.etag {
-            req = req.header("If-None-Match", etag);
-        }
-        if let Some(lm) = &options.last_modified {
-            req = req.header("If-Modified-Since", lm);
-        }
+        for _ in 0..=MAX_REDIRECTS {
+            // Held for the length of this hop and dropped before the next, so
+            // every host in a chain waits its own turn.
+            let lease = self.politeness.lease(target.host_str().unwrap_or(""));
 
-        let response = req.call().map_err(|e| NetError::Transport(e.to_string()))?;
-        let status = response.status().as_u16();
-        let header = |name: &str| {
-            response
-                .headers()
-                .get(name)
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_string)
-        };
-        let etag = header("etag");
-        let last_modified = header("last-modified");
-        let content_type = header("content-type");
-        let retry_after = header("retry-after").and_then(|v| v.trim().parse::<i64>().ok());
-        // `ureq`'s redirect handling leaves the final URI on the response
-        // extensions; where it is not there the request URL is the answer,
-        // which is the no-redirect case.
-        let final_url = {
-            use ureq::ResponseExt as _;
-            response.get_uri().to_string()
-        };
-
-        // A 304 has no body by definition, and asking for one on a connection
-        // the server has already finished with is how a read hangs.
-        let body = if status == 304 {
-            Vec::new()
-        } else {
-            let limit = options.max_bytes.max(1);
-            let body = response
-                .into_body()
-                .into_with_config()
-                // One byte over the limit, so that a body exactly at the
-                // limit is not mistaken for one that was cut short.
-                .limit(limit + 1)
-                .read_to_vec()
-                .map_err(|e| NetError::Transport(e.to_string()))?;
-            if body.len() as u64 > limit {
-                return Err(NetError::TooLarge(limit));
+            let mut req = self.agent.get(target.as_str());
+            if let Some(accept) = &options.accept {
+                req = req.header("Accept", accept);
             }
-            body
-        };
+            if let Some(etag) = &options.etag {
+                req = req.header("If-None-Match", etag);
+            }
+            if let Some(lm) = &options.last_modified {
+                req = req.header("If-Modified-Since", lm);
+            }
 
-        Ok(Response {
-            status,
-            body,
-            etag,
-            last_modified,
-            content_type,
-            retry_after,
-            final_url,
-        })
+            let response = req.call().map_err(|e| NetError::Transport(e.to_string()))?;
+            let status = response.status().as_u16();
+            let header = |name: &str| {
+                response
+                    .headers()
+                    .get(name)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string)
+            };
+            let etag = header("etag");
+            let last_modified = header("last-modified");
+            let content_type = header("content-type");
+            let retry_after = header("retry-after").and_then(|v| v.trim().parse::<i64>().ok());
+            let location = header("location");
+
+            if let (true, Some(location)) = (is_redirect(status), location.as_deref()) {
+                let next = target
+                    .join(location.trim())
+                    .map_err(|e| NetError::Transport(format!("{location}: {e}")))?;
+                if is_a_wall(&next) {
+                    return Err(NetError::Wall(next.to_string()));
+                }
+                // The body of a redirect is a courtesy page nobody reads, and
+                // the connection is wanted back.
+                drop(response);
+                drop(lease);
+                target = next;
+                continue;
+            }
+
+            // A 304 has no body by definition, and asking for one on a
+            // connection the server has already finished with is how a read
+            // hangs.
+            let body = if status == 304 {
+                Vec::new()
+            } else {
+                let limit = options.max_bytes.max(1);
+                let body = response
+                    .into_body()
+                    .into_with_config()
+                    // One byte over the limit, so that a body exactly at the
+                    // limit is not mistaken for one that was cut short.
+                    .limit(limit + 1)
+                    .read_to_vec()
+                    .map_err(|e| NetError::Transport(e.to_string()))?;
+                if body.len() as u64 > limit {
+                    return Err(NetError::TooLarge(limit));
+                }
+                body
+            };
+
+            return Ok(Response {
+                status,
+                body,
+                etag,
+                last_modified,
+                content_type,
+                retry_after,
+                final_url: target.to_string(),
+            });
+        }
+
+        Err(NetError::TooManyRedirects(MAX_REDIRECTS))
     }
+}
+
+/// The status codes that mean "it is somewhere else".
+fn is_redirect(status: u16) -> bool {
+    matches!(status, 301 | 302 | 303 | 307 | 308)
+}
+
+/// Whether a redirect has landed somewhere there is no article behind.
+///
+/// Worth stopping at rather than following: `old.reddit.com/r/<sub>/.rss`
+/// answers a 302 to `/login/?reason=lor2`, and what the program recorded
+/// against all five Reddit feeds was "not a feed (HTML page)" -- true, and
+/// two steps removed from what happened. The list is deliberately short and
+/// matches whole path segments, so an article at `/2026/09/logins-considered`
+/// is untouched.
+fn is_a_wall(url: &Url) -> bool {
+    const SEGMENTS: &[&str] = &[
+        "login",
+        "signin",
+        "sign-in",
+        "sign_in",
+        "consent",
+        "captcha",
+        "checkpoint",
+    ];
+    url.path_segments().is_some_and(|mut segments| {
+        segments.any(|segment| SEGMENTS.contains(&segment.to_ascii_lowercase().as_str()))
+    })
 }
 
 /// A directory of saved responses, served instead of the network.
@@ -554,6 +625,38 @@ mod tests {
         let started = Instant::now();
         drop(politeness.lease("example.org"));
         assert!(started.elapsed() >= Duration::from_millis(30));
+    }
+
+    #[test]
+    fn the_status_codes_that_mean_somewhere_else_are_the_five_that_do() {
+        for status in [301, 302, 303, 307, 308] {
+            assert!(is_redirect(status), "{status}");
+        }
+        for status in [200, 204, 304, 400, 403, 429, 500] {
+            assert!(!is_redirect(status), "{status}");
+        }
+    }
+
+    #[test]
+    fn a_redirect_into_a_login_page_is_recognised_and_an_article_is_not() {
+        // What `old.reddit.com/r/<sub>/.rss` answers with, which is what the
+        // reference database recorded as "not a feed (HTML page)".
+        assert!(is_a_wall(
+            &Url::parse("https://old.reddit.com/login/?reason=lor2").unwrap()
+        ));
+        assert!(is_a_wall(
+            &Url::parse("https://e.org/accounts/sign-in?next=/a").unwrap()
+        ));
+        assert!(is_a_wall(&Url::parse("https://e.org/consent/").unwrap()));
+
+        // Whole segments, so an article that talks about one is untouched.
+        assert!(!is_a_wall(
+            &Url::parse("https://e.org/2026/09/logins-considered-harmful").unwrap()
+        ));
+        assert!(!is_a_wall(
+            &Url::parse("https://e.org/posts/one?from=login").unwrap()
+        ));
+        assert!(!is_a_wall(&Url::parse("https://e.org/").unwrap()));
     }
 
     #[test]

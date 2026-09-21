@@ -211,6 +211,26 @@ pub(super) fn row_to_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<EntryRow> 
     })
 }
 
+/// Where an entry's link actually led, once something followed it.
+///
+/// Separate from the link the feed carried, which is what a second fetch of
+/// that feed will match on and what an OPML export has to keep. Ten entries
+/// in the reference database are one article behind two `feedpress.me`
+/// wrappers, three are behind three, and six are behind two more: the
+/// wrappers differ, the article does not, and this column is what will let
+/// them be told apart from twenty separate pieces.
+pub fn final_url(db: &Db, entry: EntryId) -> Result<Option<String>> {
+    Ok(db
+        .conn
+        .query_row(
+            "SELECT final_url FROM entry WHERE id = ?1",
+            [entry.0],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten())
+}
+
 /// The `WHERE` a selection comes to, and its one bound parameter.
 ///
 /// Returned as a pair rather than interpolated, because the one selection

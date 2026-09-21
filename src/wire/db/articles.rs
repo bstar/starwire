@@ -113,6 +113,17 @@ pub fn put(db: &Db, entry: EntryId, result: &ArticleResult) -> Result<()> {
             retry_after,
         ],
     )?;
+
+    // Where the link actually led, kept on the entry as well as on the
+    // article: `article.source_url` is what the reader opens, and this is
+    // what says that two feed items behind two wrappers are one piece. Only
+    // written when it is not simply the link the feed carried.
+    if let Some(landed) = result.source_url.as_deref() {
+        db.conn.execute(
+            "UPDATE entry SET final_url = ?2 WHERE id = ?1 AND url IS NOT ?2",
+            params![entry.0, landed],
+        )?;
+    }
     Ok(())
 }
 
@@ -524,6 +535,49 @@ mod tests {
         assert_eq!(backoff_secs(900, 20), 24 * 60 * 60);
         assert_eq!(backoff_secs(0, 1), 60, "a zero base is still a minute");
         assert_eq!(backoff_secs(i64::MAX, 1), 24 * 60 * 60);
+    }
+
+    #[test]
+    fn where_the_link_led_is_kept_on_the_entry_when_it_is_not_where_it_pointed() {
+        let db = seeded();
+        let id = first(&db);
+        put(
+            &db,
+            id,
+            &ArticleResult {
+                status: ArticleStatus::Extracted,
+                markdown: Some("The piece.".into()),
+                source_url: Some("https://elsewhere.example/the-piece".into()),
+                ..ArticleResult::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            entries::final_url(&db, id).unwrap().as_deref(),
+            Some("https://elsewhere.example/the-piece")
+        );
+
+        // A link that led where it pointed leaves the column alone: it is
+        // there to say a wrapper was followed, not to hold a second copy of
+        // every URL in the file.
+        let plain = entries::page(&db, &Selection::All, false, 0, 10)
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|row| row.id != id)
+            .expect("the other entry");
+        put(
+            &db,
+            plain.id,
+            &ArticleResult {
+                status: ArticleStatus::Extracted,
+                markdown: Some("The other piece.".into()),
+                source_url: plain.url.clone(),
+                ..ArticleResult::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(entries::final_url(&db, plain.id).unwrap(), None);
     }
 
     #[test]

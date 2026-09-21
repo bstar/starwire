@@ -87,6 +87,11 @@ CREATE TABLE IF NOT EXISTS entry (
   -- and the reason read state survives a feed with no ids.
   guid          TEXT NOT NULL,
   url           TEXT,
+  -- Where that link actually led, once something followed it. Ten entries in
+  -- the reference database are one article behind two `feedpress.me`
+  -- wrappers; the wrapper is what the feed carried and this is what tells
+  -- them apart from two articles.
+  final_url     TEXT,
   title         TEXT NOT NULL DEFAULT '',
   author        TEXT,
   kind          INTEGER NOT NULL DEFAULT 0,  -- 0 article, 1 video, 2 post

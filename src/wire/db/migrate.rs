@@ -56,6 +56,7 @@ pub fn migrate(conn: &Connection, from: i32) -> Result<()> {
 /// a table that already exists, and a value rewritten in place.
 fn one_to_two(conn: &Connection) -> Result<()> {
     add_column(conn, "article", "retry_after", "INTEGER")?;
+    add_column(conn, "entry", "final_url", "TEXT")?;
     backfill_failed_markdown(conn)?;
     Ok(())
 }
