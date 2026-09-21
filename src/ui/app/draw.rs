@@ -314,6 +314,18 @@ pub(super) fn too_small(area: Rect, buf: &mut Buffer, theme: &Theme) {
     buf.set_string(x, y, text, Style::default().fg(rgb(theme.error)));
 }
 
+/// Where a list may be scrolled to: far enough to keep the cursor drawn, and
+/// never past the last page.
+///
+/// STAR/KIT's own rule is the first half, which is all a list that only ever
+/// grows and shrinks at the bottom needs. A filter takes rows away from
+/// under a list that is already scrolled -- forty feeds narrowed to three,
+/// with the view a page down -- and without the second half those three are
+/// drawn off the top of the panel.
+fn clamp(cursor: usize, at: usize, rows: usize, len: usize) -> usize {
+    starkit::list::clamp_scroll(cursor, at, rows).min(len.saturating_sub(rows))
+}
+
 /// Where each module's list can scroll to, given what the last layout drew.
 impl App {
     pub(super) fn clamp_scrolls(&mut self) {
@@ -329,9 +341,10 @@ impl App {
             match m {
                 ModuleId::Sources => {
                     let rows = sources::visible_rows(rect, folded);
+                    let len = self.view.source_rows.len();
                     let cursor = self.stack.frames()[i].cursor;
                     let at = self.stack.frames()[i].scroll;
-                    let to = starkit::list::clamp_scroll(cursor, at, rows);
+                    let to = clamp(cursor, at, rows, len);
                     self.stack
                         .frames_mut()
                         .nth(i)
@@ -340,9 +353,10 @@ impl App {
                 }
                 ModuleId::Entries => {
                     let rows = entries::visible_rows(rect, folded);
+                    let len = self.view.entry_rows.len();
                     let cursor = self.stack.frames()[i].cursor;
                     let at = self.stack.frames()[i].scroll;
-                    let to = starkit::list::clamp_scroll(cursor, at, rows);
+                    let to = clamp(cursor, at, rows, len);
                     self.stack
                         .frames_mut()
                         .nth(i)
@@ -362,5 +376,21 @@ impl App {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamp;
+
+    /// The half of the scroll rule this file adds: a list that shrank under
+    /// a scrolled view -- which is what a filter does -- comes back to the
+    /// last page instead of drawing its matches off the top.
+    #[test]
+    fn a_narrowed_list_scrolls_back_into_view() {
+        assert_eq!(clamp(2, 2, 18, 3), 0, "forty rows narrowed to three");
+        assert_eq!(clamp(5, 3, 10, 40), 3, "already drawn, left alone");
+        assert_eq!(clamp(0, 12, 10, 40), 0, "the cursor above the view");
+        assert_eq!(clamp(30, 12, 10, 40), 21, "the cursor below it");
     }
 }
