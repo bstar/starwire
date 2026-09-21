@@ -20,6 +20,30 @@ and, if you are lucky, two sentences. What you want is the article.
 This happens in the background as entries arrive, which is why opening one is
 instant rather than a wait.
 
+## In the reader
+
+An article is drawn at `[reading] width` columns, centred, with the headline
+above it and — when `[reading] show_byline` is on — whatever the page said
+about who wrote it, where, and when, plus how long it is to read. The headline
+is drawn once however many times the page said it: most sites put it in the
+title *and* at the top of the body.
+
+- `<` and `>` step the width by eight, between 40 and 160, and write it back
+  to `config.toml`. There is no wrong answer; eighty is what a century of
+  typography says and what most of these articles were written for.
+- Links are numbered `[1]`, `[2]`, … in the order they appear, and `o` then a
+  number opens one. The number closes as soon as it cannot grow, so `o1` in an
+  article with three links opens link one at once. `oo` opens the article
+  itself; so does `o` from the entry list.
+- `e` pulls the page again, for a site that was down the first time.
+- `space` and `b` page; `n` and `p` step to the next and previous entry,
+  keeping your place in the one you are leaving; `N` finds the next unread
+  even if it is in another feed.
+- `esc` closes the article.
+
+An article still being fetched says `extracting…`; one that failed says why,
+and `o` opens the page; a video shows its description and `v` plays it.
+
 ## What is not scraped, and why
 
 **A video.** Its description is the text and the video is the point. `v` plays
@@ -81,6 +105,7 @@ in, and a redirect to plaintext is refused.
 ## Images
 
 Pictures inside articles are not in this release. An image in the markdown is
-kept as an image and the reader draws it as an `[image: alt]` line; nothing is
-downloaded. `[articles] images = false` leaves the alt text behind as a plain
-paragraph instead.
+kept as an image and the reader draws it as an `[image: alt]` line — or just
+`[image]` when the page gave no alt text, which is most decorative header
+images. Nothing is downloaded. `[articles] images = false` leaves the alt text
+behind as a plain paragraph instead.

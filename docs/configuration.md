@@ -67,6 +67,11 @@ browser too.
 `--terminal=no` matters for `mpv`: without it, it takes over the terminal
 STAR/WIRE is drawing in.
 
+This is the one setting the `,` overlay has no row for. It is a list of
+strings, and the overlay writes a single scalar to a single line; a row that
+changed the player for the run and forgot it on the next would be worse than
+no row. Edit it here.
+
 ## `[youtube]`
 
 ```toml
@@ -83,5 +88,12 @@ way to read an account's subscriptions without them. See
 ## Where each setting takes effect
 
 Most apply the moment they are read. `[player]` and `[youtube]` argv changes
-take effect on restart. The settings overlay in the reader writes to this file
-and says which of the two a row is.
+take effect on restart, and so does `[ui] graphics` when it asks for a
+protocol the terminal was not probed for — the probe happens before raw mode
+is on, and there is no second chance at it without one. The settings overlay
+(`,`) writes to this file, one line at a time, and says so when a row will
+not take effect until the next start.
+
+The overlay covers: the theme, the reading width, the byline, whether opening
+an entry marks it read, whether pages are extracted, how often a background
+refresh runs, and the graphics mode. Everything else lives here.
