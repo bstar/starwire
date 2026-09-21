@@ -22,9 +22,9 @@ against the real thing this says so.
 
 ## Not started
 
-Nothing in this milestone. What is deliberately outside it is below.
+Nothing in 0.0.1. What is deliberately outside it is below.
 
-## Deliberately outside this milestone
+## Deliberately outside 0.0.1
 
 - Pictures inside articles. The markdown keeps them and the reader draws an
   `[image: alt]` line -- or just `[image]` when the page gave no alt text;
@@ -34,6 +34,11 @@ Nothing in this milestone. What is deliberately outside it is below.
 - Folders inferred from a newsboat file's `# comment` headers. The importer
   reads them and does nothing with them; folders are assigned in the app.
 - Podcasts and enclosures.
+- An optional summary from a local model, for an article too long to face at
+  the end of an evening. A key in the reader, a model on the machine, and
+  nothing sent anywhere.
+- A page for STAR/WIRE on the STAR/FLEET site, alongside the rest of the
+  family.
 - Read-later as a separate flag. Starred *is* read-later: two lists nobody
   empties are worse than one.
 
@@ -46,17 +51,35 @@ paywall.
 
 ## Not verified against the real thing
 
-Everything else is tested against fixtures in `testdata/`, which is a
-different claim from having been run against the network. Specifically: what
-extraction looks like across a whole feed list over a week, whether real
-servers' conditional requests behave as expected, Reddit's rate limiter,
-`yt-dlp` itself, a newsboat cache written by an older newsboat, and two
-writers on one database at the same time.
+Everything else is tested against fixtures in `testdata/`, and the window has
+been run by hand in kitty and in tmux against the replay fixture and against a
+live feed list. Both are a different claim from having met the real thing.
+This list is `AGENTS.md`'s, in short; that file is where it is kept current.
 
-The window has been run by hand in kitty and in tmux against the replay
-fixture and against a live feed list, and every frame it draws is kept as a
-snapshot. What that has *not* covered: the terminals nobody here has —
-Alacritty, WezTerm, Ghostty, the macOS Terminal — a forty-one feed list at
-sixty columns for a whole evening, `mpv` and a browser launched from inside
-the alternate screen on a desktop other than this one, and the clipboard over
-ssh. `AGENTS.md` keeps that list current.
+- **Extraction at scale.** Twenty entries from one feed is not forty-one feeds
+  over a week. What the failure reasons look like across a real list is still
+  open.
+- **Conditional requests against real servers.** `ETag` and `Last-Modified`
+  are stored and sent back; no server has yet answered 304 to this program.
+- **Reddit's rate limiter.** The per-host gap, the user agent, the
+  `Retry-After` handling and the HTML-page-instead-of-a-feed case are written
+  to a reading of how it behaves, not to an observation of it.
+- **`yt-dlp`.** Neither the handle resolver nor the subscription sync has been
+  run against the real binary; the parsing is tested against fixture output.
+- **A newsboat cache in the wild.** The importer reads the schema as
+  documented. A cache written by an older newsboat has not been tried.
+- **Two writers at once.** WAL, `busy_timeout` and the `data_version` poll are
+  the design; a timer and a reader have not been run against one file at the
+  same time.
+- **The window, in other terminals.** Nothing here has seen it in Alacritty,
+  WezTerm, Ghostty or the macOS Terminal, and the graphics probe is the part
+  most likely to answer differently in one of them.
+- **The window, for a whole evening.** Forty-one feeds at sixty columns, an
+  article a thousand rows long, a refresh running while somebody reads.
+- **Launching somebody else's program from inside the alternate screen.**
+  `mpv --terminal=no` and `xdg-open` are detached with every fd on
+  `/dev/null`, and that has been seen working on one desktop. A browser that
+  insists on stealing the terminal has not been met.
+- **The clipboard over ssh.** `y` copies through a clipboard that needs a
+  display at the other end. The failure path is a note in the status line and
+  is tested; the success path over a forwarded display is not.
