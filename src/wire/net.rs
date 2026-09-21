@@ -109,8 +109,6 @@ impl Response {
 /// What went wrong on the way.
 #[derive(Debug, thiserror::Error)]
 pub enum NetError {
-    #[error("{0} is not a URL this can fetch: {1}")]
-    BadUrl(String, String),
     #[error("the body was larger than the {0} byte limit")]
     TooLarge(u64),
     #[error("nothing in the replay directory answers {0}")]
@@ -169,9 +167,7 @@ impl Http for Live {
             req = req.header("If-Modified-Since", lm);
         }
 
-        let response = req
-            .call()
-            .map_err(|e| NetError::Transport(e.to_string()))?;
+        let response = req.call().map_err(|e| NetError::Transport(e.to_string()))?;
         let status = response.status().as_u16();
         let header = |name: &str| {
             response
@@ -234,6 +230,7 @@ impl Http for Live {
 /// editor.
 pub struct Replay {
     index: HashMap<String, std::path::PathBuf>,
+    feeds: Vec<String>,
 }
 
 impl Replay {
@@ -248,14 +245,32 @@ impl Replay {
                 continue;
             }
             let Some((url, file)) = line.split_once('\t') else {
-                anyhow::bail!("{}: expected URL<TAB>file, got {line:?}", index_path.display());
+                anyhow::bail!(
+                    "{}: expected URL<TAB>file, got {line:?}",
+                    index_path.display()
+                );
             };
-            index.insert(
-                normalise_key(url.trim()),
-                dir.join(file.trim()),
-            );
+            index.insert(normalise_key(url.trim()), dir.join(file.trim()));
         }
-        Ok(Self { index })
+        // Optional, and only used by `--replay`: the feed list to put in a
+        // database that has none, so that a replay run has something to
+        // fetch on a machine that has never run this before.
+        let feeds = match std::fs::read_to_string(dir.join("feeds.tsv")) {
+            Ok(text) => text
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .map(str::to_string)
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+
+        Ok(Self { index, feeds })
+    }
+
+    /// The feeds this directory suggests seeding an empty database with.
+    pub fn feeds(&self) -> &[String] {
+        &self.feeds
     }
 }
 
@@ -366,10 +381,7 @@ impl Politeness {
             // session.
             let mut state = slot.state.lock().unwrap_or_else(|e| e.into_inner());
             while state.busy {
-                state = slot
-                    .free
-                    .wait(state)
-                    .unwrap_or_else(|e| e.into_inner());
+                state = slot.free.wait(state).unwrap_or_else(|e| e.into_inner());
             }
             state.busy = true;
             state.last.elapsed()
@@ -425,6 +437,8 @@ mod tests {
         assert_eq!(got.body, b"<rss/>");
         assert_eq!(got.content_type.as_deref(), Some("application/xml"));
 
+        assert!(replay.feeds().is_empty(), "there is no feeds.tsv here");
+
         let missing = replay.get(
             &Url::parse("https://example.org/other").unwrap(),
             &RequestOptions::default(),
@@ -433,10 +447,43 @@ mod tests {
     }
 
     #[test]
+    fn a_replay_directory_may_name_the_feeds_to_seed_with() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.tsv"), "").unwrap();
+        std::fs::write(
+            dir.path().join("feeds.tsv"),
+            "# a comment\n\nhttps://a.example/feed\nhttps://b.example/feed\n",
+        )
+        .unwrap();
+        let replay = Replay::open(dir.path()).unwrap();
+        assert_eq!(
+            replay.feeds(),
+            ["https://a.example/feed", "https://b.example/feed"]
+        );
+    }
+
+    #[test]
+    fn the_checked_in_replay_directory_serves_the_fixture_article() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/replay");
+        let replay = Replay::open(&dir).unwrap();
+        assert!(!replay.feeds().is_empty());
+        let got = replay
+            .get(
+                &Url::parse("https://example.org/posts/borrow-checker").unwrap(),
+                &RequestOptions::page(1 << 20),
+            )
+            .unwrap();
+        assert!(got.text().contains("Three rules"));
+    }
+
+    #[test]
     fn a_replay_index_that_is_not_tab_separated_says_so() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("index.tsv"), "https://e.org/feed a.xml\n").unwrap();
-        let err = Replay::open(dir.path()).unwrap_err().to_string();
+        let err = match Replay::open(dir.path()) {
+            Ok(_) => panic!("a line with no tab should not have parsed"),
+            Err(e) => e.to_string(),
+        };
         assert!(err.contains("URL<TAB>file"), "{err}");
     }
 

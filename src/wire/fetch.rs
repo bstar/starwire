@@ -188,8 +188,7 @@ mod tests {
             "hn-newcomments.xml",
             "reddit-sub.xml",
         ] {
-            let parsed = parse(&fixture(name), None)
-                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let parsed = parse(&fixture(name), None).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert!(!parsed.entries.is_empty(), "{name} has no entries");
             for entry in &parsed.entries {
                 assert!(!entry.guid.is_empty(), "{name}: an entry with no guid");
