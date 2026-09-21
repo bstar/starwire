@@ -32,7 +32,8 @@ only this file.
 | `parallel` | `4` | How many feeds are fetched at once. Clamped to 1–16. |
 | `timeout_secs` | `15` | The whole request, connection and body included. |
 | `max_feed_bytes` | `8388608` | A feed body larger than this is a failure rather than something to parse. |
-| `min_host_interval_secs` | `2` | The gap between two requests to one host. Requests to a host are serial regardless; this is how long the next one waits. |
+| `min_host_interval_secs` | `2` | The gap between two requests to one host, every hop of a redirect included. Requests to a host are serial regardless; this is how long the next one waits. |
+| `host_intervals` | `{}` | Longer gaps for particular hosts, by host or by a tail of one. Beats both the key above and the gaps STAR/WIRE already knows about — `reddit.com` every 61 seconds, `archive.is` every 10. A table, so it goes at the end of `[fetch]`. |
 | `user_agent_extra` | `""` | Appended to `starwire/<version> (+https://github.com/bstar/starwire)`. Put a contact address here if you would rather the sites you read had a way to reach you. |
 | `refresh_on_start` | `true` | Refresh when the reader opens. |
 
@@ -42,6 +43,7 @@ only this file.
 | --- | --- | --- |
 | `extract` | `true` | Fetch the linked page and pull the article out of it. `false` leaves every entry on the text its feed carried. |
 | `max_article_bytes` | `2097152` | The most HTML downloaded for one article. |
+| `timeout_secs` | `30` | The whole of one page request. Longer than `[fetch] timeout_secs` on purpose: a feed is a file the server already has, and an article is often rendered when it is asked for. |
 | `max_markdown_bytes` | `524288` | Markdown longer than this is cut at a paragraph boundary. |
 | `keep_days` | `30` | Entries older than this are swept. |
 | `max_entries_per_feed` | `2000` | And the second bound, which is the one that matters for a busy feed: a month of `hnrss/newcomments` is about a hundred thousand rows. |
@@ -50,6 +52,15 @@ only this file.
 
 **Starred entries survive both retention bounds.** Starring something is how
 you say keep this.
+
+```toml
+[fetch.host_intervals]
+"reddit.com" = 120
+"news.example" = 30
+```
+
+`host_intervals` is a table, so in a hand-edited file it has to come after
+every plain `[fetch]` key: a line written below it belongs to it.
 
 ## `[player]` — what opens a link and what plays a video
 

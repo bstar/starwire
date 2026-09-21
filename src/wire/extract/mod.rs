@@ -178,11 +178,18 @@ impl From<&super::ArticlesConfig> for Limits {
 
 /// Fetch one page and reduce it.
 ///
-/// Every failure comes back as an [`ArticleResult`] with
-/// [`ArticleStatus::Failed`] and a reason rather than as an `Err`: the
-/// caller's job is to store the outcome either way, the reader shows the
-/// reason beside an offer to open the page in a browser, and an entry whose
-/// page is a paywall is still an entry worth having in the list.
+/// Every failure comes back as an [`ArticleResult`] with a reason rather than
+/// as an `Err`: the caller's job is to store the outcome either way, the
+/// reader shows the reason beside an offer to open the page in a browser, and
+/// an entry whose page is a paywall is still an entry worth having in the
+/// list.
+///
+/// Two shapes of not-quite-failure are worth knowing about. A page that did
+/// not yield is [`ArticleStatus::Failed`] with no markdown, which leaves
+/// whatever the feed carried in place -- `db::articles::put` coalesces. A page
+/// that answered with a free sample is [`ArticleStatus::FeedContent`] with no
+/// markdown and `paywall` as the reason, which does the same thing and is not
+/// a failure: the request worked and the answer was honest.
 ///
 /// The one `Err` is a URL that will not parse, which is a bug in whatever
 /// produced it rather than something the network did.
@@ -232,7 +239,7 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
     let final_url = Url::parse(&response.final_url).unwrap_or(parsed);
     let html = response.text();
 
-    let extracted = match readability::extract(&html, Some(final_url.as_str())) {
+    let mut extracted = match readability::extract(&html, Some(final_url.as_str())) {
         Ok(e) => e,
         Err(e) => return Ok(failed(final_url.as_str(), e.to_string())),
     };
@@ -241,8 +248,9 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
 
     // An article the site split across pages, put back together. Only where a
     // rule says this site does that, and only while the pages stay on the
-    // same host and under the same path.
-    let mut article_html = extracted.content_html.clone();
+    // same host and under the same path. Taken rather than copied: a page is
+    // allowed to be two megabytes.
+    let mut article_html = std::mem::take(&mut extracted.content_html);
     article_html.push_str(&follow_pages(http, &html, &final_url, limits));
 
     // The pictures' addresses, before the converter -- which reads `src` and

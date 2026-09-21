@@ -6,19 +6,40 @@ and, if you are lucky, two sentences. What you want is the article.
 ## What happens to an entry
 
 1. The feed is fetched and its entries are stored. Whatever text the feed
-   itself carried is stored with them, so an entry is readable immediately.
+   itself carried is stored with them, so an entry is readable immediately —
+   and stays readable whatever happens next. A description with no markup in
+   it keeps the lines it was written with, which is what a YouTube chapter
+   list is.
 2. If the entry's link is worth fetching, the page behind it is downloaded and
    run through Mozilla's readability algorithm — the same one behind Firefox's
    reader view — which finds the article inside the navigation, the newsletter
    box and the footer.
-3. That HTML becomes CommonMark: headings, lists, quotes, tables, links, and
-   fenced code blocks keeping the language the page declared.
-4. The markdown is tidied. Runs of blank lines collapse, every relative link
+3. Where the site splits an article across pages and STAR/WIRE knows it does,
+   the rest of the pages are fetched and joined on: same host, same path, at
+   most eight, one at a time with the usual gap between them. Phoronix
+   reviews are the case this exists for.
+4. If the page gives up nothing at all, its own structured data is asked next:
+   a page that draws itself with JavaScript often still carries the whole
+   article in a `<script type="application/ld+json">` for search engines, and
+   that is the only honest copy of it the page will give anybody.
+5. That HTML becomes CommonMark: headings, lists, quotes, tables, links, and
+   fenced code blocks keeping the language the page declared. Pictures are
+   resolved first — `srcset`, `<picture>` and the `data-src` a lazy-loading
+   page hides the real address in — so what lands in the text is the picture
+   and not a one-pixel spacer.
+6. The site's own furniture comes off. A share bar, a "more like this" list, a
+   patron link and an ad slot inside the prose are all inside the element
+   readability scored, so a short table of per-site rules takes them out
+   again.
+7. The markdown is tidied. Runs of blank lines collapse, every relative link
    is resolved against the page it came from, and anything past
    `[articles] max_markdown_bytes` is cut at a paragraph boundary.
 
 This happens in the background as entries arrive, which is why opening one is
 instant rather than a wait.
+
+In order, then: **the page, its other pages, its JSON-LD, the feed's own
+text.** Something at every step, and the feed's text underneath all of it.
 
 ## In the reader
 
@@ -72,14 +93,29 @@ or a "page" that is really a PDF will all fail — and so will a link to a
 homepage, which readability is asked about first and refuses, because
 otherwise it would happily return a page's navigation as an "article".
 
-When that happens the entry keeps whatever its feed carried, the reason is
-recorded, and the entry is still there to read and to open in a browser. An
-entry is tried at most three times, ever: a page that has failed three times is
-a paywall, and a fourth request helps nobody.
+**The entry keeps the text its feed carried.** It is stored the moment the
+entry arrives and a failed extraction never overwrites it, so what you see is
+the feed's summary with one line above it saying why there is no more and
+offering to open the page. That is the difference between an entry that is two
+sentences and an entry that is blank.
+
+A page that answers with the first two paragraphs and an invitation to
+subscribe is treated the same way: the feed's own text, and `paywall` as the
+reason. Both are usually the same two paragraphs, and the feed's version does
+not pretend to be the article.
+
+**Some failures come back on their own.** A `429`, a `5xx` and a timeout are
+facts about that minute, so the entry rejoins the queue after
+`[fetch] refresh_minutes`, doubling for each attempt and capped at a day. A
+`401`, a `402`, a `403`, a `404` and "does not read like an article" are facts
+about the page and stay where they are — a browser's user agent gets the same
+codes, which has been measured. Either way an entry costs at most three
+requests ever, and `e` in the reader forces another.
 
 `starwire extract <url>` runs the whole thing on one page and prints the
 result, without a feed and without writing anything. It is the fastest way to
-find out whether a site works before subscribing to it.
+find out whether a site works before subscribing to it, and it exits 1 with
+the reason when the page gives nothing.
 
 ## How polite this is
 
@@ -88,8 +124,19 @@ oversight: this fetches pages you subscribed to and asked to read, one per
 entry, at most three times ever. The politeness is in the construction:
 
 - One request at a time per host, with `[fetch] min_host_interval_secs`
-  between them.
-- A fifteen-second timeout on the whole request, and at most five redirects.
+  between them — **including every hop of a redirect.** A wrapper URL that
+  points somewhere else is two requests to two hosts, and each waits its own
+  turn.
+- A longer gap for the hosts that have asked for one: `reddit.com` every
+  sixty-one seconds, `archive.is` every ten, plus whatever
+  `[fetch] host_intervals` says. Where a server sends its own rate-limit
+  headers and STAR/WIRE believes them — Reddit does — the reset it names is
+  waited out.
+- `[fetch] timeout_secs` on a feed and `[articles] timeout_secs` on a page,
+  and at most five redirects, which are followed one at a time rather than by
+  the HTTP library.
+- A redirect into a login page stops there and is reported, rather than being
+  fetched and extracted.
 - `[fetch] max_feed_bytes` and `[articles] max_article_bytes` caps.
 - An `Accept` header that says what is wanted, so a server that would rather
   send something else can.
@@ -104,8 +151,15 @@ in, and a redirect to plaintext is refused.
 
 ## Images
 
-Pictures inside articles are not in this release. An image in the markdown is
-kept as an image and the reader draws it as an `[image: alt]` line — or just
-`[image]` when the page gave no alt text, which is most decorative header
-images. Nothing is downloaded. `[articles] images = false` leaves the alt text
-behind as a plain paragraph instead.
+Pictures inside articles are not drawn in this release. An image in the
+markdown is kept as an image and the reader draws it as an `[image: alt]` line
+— or just `[image]` when the page gave no alt text, which is most decorative
+header images. Nothing is downloaded. `[articles] images = false` leaves the
+alt text behind as a plain paragraph instead.
+
+The address kept for one is the address the picture is really at, which on a
+modern page takes finding: the `src` is often a spacer or a base64 blur, with
+the real one in `srcset`, in a `<picture>`, in `data-src`, or in the
+`<noscript>` the page shows to a browser without JavaScript. A picture whose
+only address is its own bytes is dropped and its alt text kept: nothing can
+fetch it, and one blur placeholder is two kilobytes of the size cap.

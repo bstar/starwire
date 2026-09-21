@@ -120,9 +120,17 @@ config rather than in `cache/`.
 
 `wire::youtube::canonicalise` is more than a YouTube function despite where it
 lives. Everything entering the program — a typed URL, an imported line, an
-OPML outline — goes through it, and it does three things: gives a bare host a
-scheme, rewrites `http` to `https`, and normalises a YouTube channel to its
-`videos.xml?channel_id=` feed.
+OPML outline — goes through it, and it does four things: gives a bare host a
+scheme, rewrites `http` to `https`, applies `wire::feed::canonical_url`, and
+normalises a YouTube channel to its `videos.xml?channel_id=` feed.
+
+`feed::canonical_url` is the host rewrites that are not YouTube's, and it lives
+in `feed.rs` rather than here so that the YouTube module does not grow an
+opinion about Reddit. There is one entry in its table: `old.reddit.com` becomes
+`www.reddit.com`, because the old host answers a feed request with a login
+page. A new one there needs a migration beside it — `canonicalise` runs when a
+feed is *added*, and nothing re-runs it over the feeds already in the file
+except `db::migrate`.
 
 The `http` rewrite is the one worth defending. The agent STAR/KIT builds
 refuses plaintext, and that is kept rather than relaxed, so
@@ -143,10 +151,12 @@ There is no `robots.txt` request, and that is a decision rather than an
 oversight: this fetches pages a person subscribed to and asked to read, one
 per entry, at most three times ever. The politeness is structural instead —
 `wire::net::Politeness` holds a host serially for the length of a request and
-sleeps the configured gap between them, there is a fifteen-second timeout and
-a two-megabyte cap, the `Accept` header says HTML, and the user agent names
-the program and links the repository so an unhappy administrator knows who to
-ask.
+sleeps the configured gap between them, there is a timeout (fifteen seconds
+for a feed, thirty for a page) and a two-megabyte cap, the `Accept` header
+says HTML, and the user agent names the program and links the repository so an
+unhappy administrator knows who to ask. `Politeness` also keeps a small table
+of hosts that have said they want a longer gap, and a host held by its own
+`x-ratelimit-reset` waits that out.
 
 Three kinds of entry are never fetched, and `wire::extract::policy` is where
 that is decided: a video (the description is the text, and `mpv` is the
@@ -155,6 +165,15 @@ thread, and Reddit rate limits hard enough that scraping it would cost the
 whole list its refreshes), and a Hacker News item whose link goes back into
 `news.ycombinator.com`. An `hnrss` item that links out **is** fetched, which
 is most of the value of reading HN in a reader at all.
+
+Two things fetch *more* than 0.0.1 did, and both are deliberate and narrow.
+Redirects are followed here rather than by `ureq`, which is the same number of
+requests with a lease on each hop instead of none. And an article the site
+split across pages is joined up -- only where `extract::rules` says that site
+does it, only while the pages stay on the same host and under the same path,
+at most eight pages, one lease each. Following every `rel="next"` on the web
+would be eight requests for every paginated archive, which is why it is a
+table rather than a heuristic.
 
 ## The two html5ever copies
 
@@ -195,11 +214,11 @@ the columns this reads are five.
 `STARWIRE_TEST_NET=1` gates anything that reaches the real network; the
 `yt-dlp` tests also want the binary on `PATH`.
 
-## Verified against the network, once
+## Verified against the network
 
-`starwire extract` and one `starwire fetch` have now been run with the
-network on. What was observed, so that the next person does not have to guess
-at it:
+`starwire extract` and `starwire fetch` have been run with the network on, in
+0.0.1 and again in 0.0.2 against a copy of a real forty-one-feed database.
+What was observed, so that the next person does not have to guess at it:
 
 - **Real article pages yield.** `blog.rust-lang.org`, a Phoronix news item and
   the sixteen of twenty entries on the Hacker News front page that linked out
@@ -217,6 +236,23 @@ at it:
 - **`keep_classes: true` is load-bearing.** With it off, every fenced code
   block in every article lost its language. This is why the comment in
   `extract/readability.rs` says what it says.
+- **Reddit's limiter, measured.** `old.reddit.com/r/<sub>/.rss` answers a 302
+  to `/login/?reason=lor2`: the login page is the "HTML, not a feed" that all
+  five Reddit feeds in the reference database had recorded against them, and
+  the rate limiter was not involved. `www.reddit.com/r/<sub>/.rss` serves Atom
+  to this program's user agent and answers `x-ratelimit-remaining: 0.0`,
+  `x-ratelimit-reset: 40` after **one** request; a browser's user agent gets a
+  429 outright. That is about one request a minute for the whole of
+  `reddit.com`, which is what the sixty-one-second rule in `wire::net` is.
+- **The page follower, against Phoronix.** One review came back as 16 KB of
+  markdown over eight requests, where 0.0.1 stored 3 KB from page one of nine.
+  Eight is the cap, so the last page of a nine-page review is still missed;
+  raising it is one number, and the reason it is not raised is that eight
+  pages is already eight requests for one entry.
+- **The site rules, against the sites.** GamingOnLinux without its footer,
+  KitGuru without its share bar or its "Check Also" list, Arch's short news
+  items extracting where they used to be refused, and a Bloomberg article
+  coming back as `paywall` rather than as 494 bytes of article.
 
 ## Not yet verified
 
@@ -226,17 +262,22 @@ a different claim. This is where a claim that turned out to be a guess rather
 than an observation gets recorded, the same way STAR/CORD keeps its own list
 of protocol details still waiting on one. Specifically, still unverified:
 
-- **Extraction at scale.** Twenty entries from one feed is not forty-one
-  feeds over a week. What the failure reasons look like across a real list,
-  and whether any site is slow enough to be worth a special case, is still
-  open.
+- **Extraction over a week.** One refresh of forty-one feeds has now been run
+  and its failure reasons counted. What they look like after a week, and
+  whether the retry classes turn a 429 into an extraction or into three 429s,
+  is still open.
 - **Conditional requests against real servers.** `ETag` and
   `Last-Modified` are stored and sent back; no server has yet answered 304 to
   this program.
-- **Reddit's rate limiter.** The per-host gap, the user agent, the
-  `Retry-After` handling and the 200-with-an-HTML-page case that
-  `fetch::looks_like_html` catches are all written to a reading of how it
-  behaves, not to an observation of it.
+- **The retry classes, arriving.** A 429 and a timeout are stored with a
+  `retry_after` and the queue reads it, tested against a database. No entry
+  has yet been watched to come round on its own and succeed on the second
+  attempt.
+- **The JSON-LD fallback, on a real page.** It is tested against a fixture and
+  against the shape sites are documented to emit. No page in the reference
+  database needed it -- the loosened gate caught all eight of the real
+  articles that used to be refused -- so it has not yet answered for anything
+  live.
 - **`yt-dlp`.** Neither `resolve_with_yt_dlp` nor `yt_subscriptions` has been
   run against the real binary; the parsing is tested against fixture output.
   `:ytsubs` in particular lists recent subscription *videos* rather than the
