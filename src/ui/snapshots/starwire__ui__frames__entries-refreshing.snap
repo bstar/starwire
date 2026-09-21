@@ -1,0 +1,34 @@
+---
+source: src/ui/frames.rs
+expression: "render(&mut app, 100, 30)"
+---
+╔═ S T A R / W I R E ════════════════════════════════════════════════════════════════════ sources ═╗
+║                                                                                     add  refresh ║
+║▸ sources › Tech › Hacker News                                                 4 feeds · 5 unread ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+╔═ ENTRIES — Hacker News ═════════════════════════════════════════════════════════════ ⠋ 12 of 41 ═╗
+║                                                                                ‹  unread  filter ║
+║▸ Hacker News › 1 of 3 · Why the borrow checker says no: a field guide to lifetimes               ║
+║●  Why the borrow checker says no: a field guide to lifetimes                                  2h ║
+║●  The page that has not arrived yet                                                           3h ║
+║●! Behind a paywall                                                                            4h ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+╔═ READER ═════════════════════════════════════════════════════════════════════════════════════════╗
+║                                                                                 ‹  star  browser ║
+║                                           nothing open                                           ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+? help  ⠋ refreshing  12 of 41                                           Hacker News · 1/3 · 0%  off

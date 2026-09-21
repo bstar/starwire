@@ -23,7 +23,12 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
+pub mod app;
 pub mod clipboard;
+#[cfg(test)]
+pub mod fake;
+#[cfg(test)]
+mod frames;
 pub mod keymap;
 pub mod layout;
 pub mod markdown;
@@ -62,8 +67,7 @@ pub fn run(
     cfg_path: PathBuf,
     session_path: Option<PathBuf>,
 ) -> Result<()> {
-    let _ = (core, cfg, cfg_path, session_path);
-    Ok(())
+    app::App::run(core, cfg, cfg_path, session_path)
 }
 
 #[cfg(test)]

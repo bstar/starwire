@@ -62,6 +62,10 @@ pub struct View<'a> {
     pub reading_width: u16,
     /// Whether there is an entry open at all.
     pub open: bool,
+    /// The entry is open but its text has not arrived from the database
+    /// yet. One frame, usually; the state exists so that frame says
+    /// something rather than claiming the article is empty.
+    pub loading: bool,
 }
 
 /// How many columns of text the body gets: the reader's setting, or the
@@ -177,6 +181,14 @@ pub fn render(area: Rect, buf: &mut Buffer, v: &View<'_>, bars: &mut Bars) {
     }
 
     match body_kind(v) {
+        Body::Loading => {
+            centred(
+                rest,
+                buf,
+                "reading\u{2026}",
+                Style::default().fg(rgb(t.dim)),
+            );
+        }
         Body::Pending => {
             centred(
                 rest,
@@ -228,6 +240,7 @@ pub fn render(area: Rect, buf: &mut Buffer, v: &View<'_>, bars: &mut Bars) {
 }
 
 enum Body<'a> {
+    Loading,
     Pending,
     Failed(&'a str),
     Lines(&'a Rendered),
@@ -237,6 +250,7 @@ enum Body<'a> {
 fn body_kind<'a>(v: &'a View<'a>) -> Body<'a> {
     match v.rendered.as_deref() {
         Some(r) if !r.lines.is_empty() => Body::Lines(r),
+        _ if v.loading => Body::Loading,
         // Nothing to draw, and a reason for it: an extraction still running
         // says so, a failed one says why.
         _ if v.status == ArticleStatus::Pending => Body::Pending,
@@ -364,6 +378,7 @@ mod tests {
             scroll: 0,
             reading_width: 80,
             open: true,
+            loading: false,
         }
     }
 

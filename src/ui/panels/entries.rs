@@ -56,12 +56,18 @@ pub struct View<'a> {
     pub loading: bool,
     /// The live `/` filter, drawn at the right of the crumb row.
     pub filter: Option<&'a str>,
+    /// What an empty list says. `choose a source` before anything has been
+    /// opened, `nothing here` for a source that has nothing in it.
+    pub empty: &'a str,
 }
 
 pub struct Split {
     pub crumb: Rect,
     pub list: Rect,
 }
+
+/// One blank column kept at the right, matching the header row's own.
+const RIGHT_PAD: u16 = 1;
 
 pub fn split(body: Rect, folded: bool) -> Split {
     let zero = |r: Rect| Rect {
@@ -75,6 +81,13 @@ pub fn split(body: Rect, folded: bool) -> Split {
             list: zero(body),
         };
     }
+    // One blank column kept at the right, matching the header row's own,
+    // so a count and the word above it line up and neither touches the
+    // border.
+    let body = Rect {
+        width: body.width.saturating_sub(RIGHT_PAD),
+        ..body
+    };
     let crumb = Rect { height: 1, ..body };
     if folded {
         return Split {
@@ -228,7 +241,7 @@ fn render_list(area: Rect, buf: &mut Buffer, t: &Theme, v: &View<'_>) {
         return;
     }
     if v.rows.is_empty() {
-        starkit::chrome::empty(area, buf, t, "nothing here");
+        starkit::chrome::empty(area, buf, t, v.empty);
         return;
     }
     let cols = columns(area.width, v.aggregate);
@@ -405,6 +418,7 @@ mod tests {
             crumb: "\u{25b8} Hacker News \u{203a} 1 of 40".into(),
             loading: false,
             filter: None,
+            empty: "nothing here",
         }
     }
 

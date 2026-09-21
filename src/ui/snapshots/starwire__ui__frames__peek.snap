@@ -1,0 +1,34 @@
+---
+source: src/ui/frames.rs
+expression: "render(&mut app, 100, 30)"
+---
+╔═ S T A R / W I R E ════════════════════════════════════════════════════════════════════ sources ═╗
+║                                                                                     add  refresh ║
+║▸ sources › Tech › Hacker News                                                 4 feeds · 4 unread ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+╔═ ENTRIES — Hacker News ═══════════════════════════════════════════════════════════════ 2 unread ═╗
+║                                                                                ‹  unread  filter ║
+║▸ Hacker News › 1 of 3 · Why the borrow checker says no: a field guide to lifetimes               ║
+║   Why the borrow checker says no: a field guide to lifetimes                                  2h ║
+║●  The page that has not arrived yet                                                           3h ║
+║●! Behind a paywall                                                                            4h ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+╔═ READER — Why the borrow checker says no: a field guide to lifetimes ════════════════════ ready ═╗
+║                                                                                 ‹  star  browser ║
+║         Why the borrow checker says no: a field guide to lifetimes                               ║
+║         Jane Example · example.org · 20 Sep 2026 · 1 min                                         ║
+║                                                                                                  ║
+║         The borrow checker is not a wall. It is a very patient reviewer that has read            █
+║         the nomicon [1] and every &'a str in your crate, and would like a word [2] about         ║
+║         three of them.[^1]                                                                       ║
+║                                                                                                  ║
+║                                                                                                  ║
+║         Three rules                                                                              ║
+║                                                                                                  ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+? help  enter read  m read  s star  o browser  v play  n next unread    Hacker News · 1/3 · 33%  off

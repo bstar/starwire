@@ -1,0 +1,34 @@
+---
+source: src/ui/frames.rs
+expression: "render(&mut app, 100, 30)"
+---
+╔═ S T A R / W I R E ════════════════════════════════════════════════════════════════════ sources ═╗
+║                                                                                     add  refresh ║
+║▸ sources › Tech › Hacker News                                                 4 feeds · 4 unread ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+╔═ ENTRIES — Hacker News ═══════════════════════════════════════════════════════════════ 2 unread ═╗
+║                                                                                ‹  unread  filter ║
+║▸ Hacker News › 3 of 3 · Behind a paywall                                                         ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+╔═ READER — Behind a paywall ═════════════════════════════════════════════════════════════ failed ═╗
+║                                                                                 ‹  star  browser ║
+║         Behind a paywall                                                                         ║
+║         20 Sep 2026                                                                              ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                             paywall                                              ║
+║                                                                                                  ║
+║                                    o opens it in the browser                                     ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+╚═════════════════════════════════════════════════════ space page · n next · o<n> link · esc close ╝
+? help  space page  n next  m read  s star  o browser  y copy           Hacker News · 3/3 · 33%  off

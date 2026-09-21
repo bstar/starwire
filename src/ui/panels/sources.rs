@@ -98,6 +98,10 @@ pub struct Split {
     pub list: Rect,
 }
 
+/// One blank column kept at the right, matching the header row's own so a
+/// count and the word above it line up and neither touches the border.
+const RIGHT_PAD: u16 = 1;
+
 /// One row of crumbs, and the rest for the list. A folded module has the
 /// crumb row and nothing else, which is the whole of what folding means
 /// here.
@@ -113,6 +117,13 @@ pub fn split(body: Rect, folded: bool) -> Split {
             list: zero(body),
         };
     }
+    // One blank column kept at the right, matching the header row's own,
+    // so a count and the word above it line up and neither touches the
+    // border.
+    let body = Rect {
+        width: body.width.saturating_sub(RIGHT_PAD),
+        ..body
+    };
     let crumbs = Rect { height: 1, ..body };
     if folded {
         return Split {
@@ -329,11 +340,10 @@ fn render_row(area: Rect, y: u16, buf: &mut Buffer, t: &Theme, row: &SourceRow, 
 
     if count_w > 0 {
         let x = area.x + area.width - count_w;
-        let pad = usize::from(count_w).saturating_sub(count.chars().count() + 1);
         buf.set_string(
             x,
             y,
-            format!("{}{count} ", " ".repeat(pad)),
+            format!("{count:>width$}", width = usize::from(count_w)),
             style_for(t.wire.unread_fg),
         );
     }

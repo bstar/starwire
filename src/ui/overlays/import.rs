@@ -330,8 +330,32 @@ fn shellexpand(text: &str) -> String {
 /// hundred columns and narrows sensibly below that. One spelling of a box's
 /// width is worth more than the exact number.
 pub fn rect(area: Rect, i: &Import) -> Rect {
-    let want = u16::try_from(i.rows().len()).unwrap_or(4) + 2;
+    // Circular in one direction only, as `chrome::confirm` is: the width the
+    // shared overlay picks does not depend on the height, but how many rows
+    // the body wraps to does depend on that width. So the width is asked for
+    // first with a placeholder height, the rows are wrapped to it, and only
+    // then is the real rect asked for.
+    let probe = overlay::rect(area, (24, 56), 6, 4, Anchor::Centre);
+    let width = overlay::inner(probe).width.saturating_sub(1);
+    let want = u16::try_from(wrapped_rows(i, width)).unwrap_or(4) + 2;
     overlay::rect(area, (24, 56), want, 4, Anchor::Centre)
+}
+
+/// How many drawn rows the box needs at `width`.
+fn wrapped_rows(i: &Import, width: u16) -> usize {
+    if width == 0 {
+        return i.rows().len();
+    }
+    i.rows()
+        .iter()
+        .map(|(text, kind)| {
+            if *kind == Row::Field || text.is_empty() {
+                1
+            } else {
+                starkit::wrap::wrap(text, width).len()
+            }
+        })
+        .sum()
 }
 
 pub fn render(area: Rect, buf: &mut Buffer, theme: &Theme, i: &mut Import) -> Option<(u16, u16)> {

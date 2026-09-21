@@ -1,0 +1,34 @@
+---
+source: src/ui/frames.rs
+expression: "render(&mut app, 100, 30)"
+---
+╔═ S T A R / W I R E ════════════════════════════════════════════════════════════════════ sources ═╗
+║                                                                                     add  refresh ║
+║▸ sources › All                                                                4 feeds · 5 unread ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+╔═ ENTRIES — search: borrow ════════════════════════════════════════════════════════════ 1 unread ═╗
+║                                                                                ‹  unread  filter ║
+║▸ search: borrow › 1 of 1 · Why the borrow checker says no: a field guide to lifetimes            ║
+║●  Why the borrow checker says no: a field guide to lifetimes            Hacker News           2h ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+╔═ READER ═════════════════════════════════════════════════════════════════════════════════════════╗
+║                                                                                 ‹  star  browser ║
+║                                           nothing open                                           ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+? help  enter read  m read  s star  o browser  v play  n next unread  search: borrow · 1/1 · 0%  off

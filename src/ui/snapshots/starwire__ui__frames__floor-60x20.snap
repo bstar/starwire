@@ -1,0 +1,15 @@
+---
+source: src/ui/frames.rs
+expression: "render(&mut app, 60, 20)"
+---
+
+
+
+
+
+
+
+
+
+
+               STAR/WIRE needs at least 60×21

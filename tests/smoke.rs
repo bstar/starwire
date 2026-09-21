@@ -370,11 +370,21 @@ fn asking_for_an_entry_that_is_not_there_fails_with_a_reason() {
     assert!(stderr.contains("9999"), "{stderr}");
 }
 
+/// The window is the one thing in this program that cannot run in a pipe,
+/// and a test harness is a pipe. What is asserted is that it says so in its
+/// own words rather than in the operating system's -- and that the first run
+/// still left a config behind, because everything before the terminal is
+/// taken over has already happened by then.
 #[test]
-fn running_it_with_no_arguments_says_where_the_window_is_and_exits_cleanly() {
+fn running_it_with_no_terminal_says_so_and_still_writes_the_config() {
     let home = home();
-    let out = stdout(home.path(), &[]);
-    assert!(out.contains("later package"), "{out}");
+    let output = command(home.path())
+        .output()
+        .expect("running starwire with no arguments");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("needs a terminal"), "{stderr}");
+    assert!(stderr.contains("starwire --help"), "{stderr}");
     assert!(
         home.path().join("config.toml").exists(),
         "a first run leaves a config to edit"

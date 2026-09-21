@@ -1,0 +1,25 @@
+---
+source: src/ui/frames.rs
+expression: "render(&mut app, 60, 21)"
+---
+╔═ S T A R / W I R E ════════════════════════════ sources ═╗
+║                                             add  refresh ║
+║▸ sources                              4 feeds · 5 unread ║
+║● All                                                   5 ║
+║○ Unread                                                5 ║
+║★ Starred                                                 ║
+║▶ Videos                                                  ║
+║⌕ Search…                                                 ║
+║▸ Tech                                                  3 ║
+║▸ YouTube                                               1 ║
+║  Phoronix                                              1 ║
+╚══════════════════════════════════════════════════════════╝
+╔═ ENTRIES ════════════════════════════════════════════════╗
+║                                        ‹  unread  filter ║
+║▸ choose a source                                         ║
+╚══════════════════════════════════════════════════════════╝
+╔═ READER ═════════════════════════════════════════════════╗
+║                                         ‹  star  browser ║
+║                       nothing open                       ║
+╚══════════════════════════════════════════════════════════╝
+? help  enter open  l into  a add  R refresh  / filter   off

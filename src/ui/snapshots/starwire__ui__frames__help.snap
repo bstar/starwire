@@ -1,0 +1,34 @@
+---
+source: src/ui/frames.rs
+expression: "render(&mut app, 100, 30)"
+---
+╔═ S T A R / W I R E ════════════════════════════════════════════════════════════════════ sources ═╗
+║         ╔═ KEYS ═══════════════════════════════════════════════════════════════════════╗ refresh ║
+║▸ sources║  navigation                         lists                                    ║5 unread ║
+║● All    ║  tab           next module          click                move the cursor     ║       5 ║
+║○ Unread ║  shift+tab     previous module      double-click         open it, read it    ║       5 ║
+║★ Starred║  alt+1         the sources          entries                                  ║         ║
+║▶ Videos ║  alt+2         the entries          right-click          star it             ║         ║
+║⌕ Search…║  alt+3         the reader           lists                                    ║         ║
+║▸ Tech   ║  up/k          up one               click a crumb        jump there          ║       3 ║
+║▸ YouTube║  down/j        down one             reader                                   ║       1 ║
+║  Phoroni║  shift+up/K    up ten               click a link         open it             ║       1 ║
+║         ║  shift+down/J  down ten             lists                                    ║         ║
+║         ║  pgup          page up              wheel                scroll three rows   ║         ║
+║         ║  pgdn          page down            modules                                  ║         ║
+║         ║  home/gg       to the top           click a fold         open the module     ║         ║
+║         ║  end/G         to the bottom        click a word         what it says        ║         ║
+║         ║  enter         open it              drag the bar         scroll it           ║         ║
+║         ║  esc           cancel               status                                   ║         ║
+║         ║  l/right       drill in             click the count      to the sources      ║         ║
+║         ║  h/left/bs     back one level                                                ║         ║
+╚═════════║  alt+up        jump to the parent                                            ║═════════╝
+╔═ ENTRIES║  alt+down      jump back down                                                ║═════════╗
+║         ║  alt+f         search everything                                             ║  filter ║
+║▸ choose ║  /             filter this list                                              ║         ║
+╚═════════║  sources                                                                     ║═════════╝
+╔═ READER ║  r             refresh this source                                           ║═════════╗
+║         ║  d/delete      remove the feed                                               ║ browser ║
+║         ║  A             mark source read                                              ║         ║
+╚═════════╚══════════════════════════════════════════════════════ more below · esc close ╝═════════╝
+? help  enter open  l into  a add  R refresh  / filter                                           off
