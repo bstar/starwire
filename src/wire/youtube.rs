@@ -102,7 +102,9 @@ pub fn detect(input: &str) -> Option<Detected> {
         return Some(Detected::Handle(handle));
     }
 
-    let url = Url::parse(raw).ok().or_else(|| Url::parse(&format!("https://{raw}")).ok())?;
+    let url = Url::parse(raw)
+        .ok()
+        .or_else(|| Url::parse(&format!("https://{raw}")).ok())?;
     let host = host_of(&url);
     if !is_youtube_host(&host) && host != "scriptbarrel.com" {
         return None;
@@ -348,14 +350,10 @@ fn fetch_channel_page(http: &dyn super::net::Http, url: &str) -> Result<Resolved
     let response = http
         .get(&parsed, &super::net::RequestOptions::page(4 * 1024 * 1024))
         .with_context(|| format!("fetching {url}"))?;
-    anyhow::ensure!(
-        response.is_ok(),
-        "{url} answered {}",
-        response.status
-    );
+    anyhow::ensure!(response.is_ok(), "{url} answered {}", response.status);
     let html = response.text();
-    let channel = channel_id_in_page(&html)
-        .ok_or_else(|| anyhow::anyhow!("no channel id in the page"))?;
+    let channel =
+        channel_id_in_page(&html).ok_or_else(|| anyhow::anyhow!("no channel id in the page"))?;
     Ok(Resolved {
         channel,
         title: title_in_page(&html),
@@ -509,7 +507,10 @@ pub fn parse_takeout(csv_text: &str) -> Result<Vec<(ChannelId, Option<String>)>>
 /// that feed are subscribed to; a channel that has published nothing inside
 /// the window is missed. That is a real limitation and it is written down in
 /// `docs/youtube.md` rather than papered over here.
-pub fn yt_subscriptions(cfg: &super::YoutubeConfig, limit: usize) -> Result<Vec<(ChannelId, Option<String>)>> {
+pub fn yt_subscriptions(
+    cfg: &super::YoutubeConfig,
+    limit: usize,
+) -> Result<Vec<(ChannelId, Option<String>)>> {
     anyhow::ensure!(
         !cfg.cookies_from_browser.trim().is_empty(),
         "reading your subscriptions needs your browser's cookies: \
@@ -605,9 +606,10 @@ mod tests {
 
     #[test]
     fn a_scriptbarrel_url_gives_up_the_only_title_the_feed_list_has() {
-        let got =
-            canonicalise(&format!("https://scriptbarrel.com/xml.cgi?channel_id={ID}&name=Some%20Channel"))
-                .unwrap();
+        let got = canonicalise(&format!(
+            "https://scriptbarrel.com/xml.cgi?channel_id={ID}&name=Some%20Channel"
+        ))
+        .unwrap();
         assert_eq!(got.title.as_deref(), Some("Some Channel"));
     }
 
@@ -662,7 +664,9 @@ mod tests {
             Some(Detected::Channel(ChannelId::parse(ID).unwrap()))
         );
         assert_eq!(
-            detect(&format!("https://scriptbarrel.com/xml.cgi?channel_id={ID}&name=x")),
+            detect(&format!(
+                "https://scriptbarrel.com/xml.cgi?channel_id={ID}&name=x"
+            )),
             Some(Detected::Channel(ChannelId::parse(ID).unwrap()))
         );
         assert_eq!(
@@ -696,7 +700,10 @@ mod tests {
     #[test]
     fn a_handle_has_to_look_like_a_handle() {
         assert!(as_handle("@ab").is_none(), "too short");
-        assert!(as_handle(&format!("@{}", "a".repeat(31))).is_none(), "too long");
+        assert!(
+            as_handle(&format!("@{}", "a".repeat(31))).is_none(),
+            "too long"
+        );
         assert!(as_handle("@with space").is_none());
         assert!(as_handle("@ok.name-1_2").is_some());
     }
@@ -723,7 +730,8 @@ mod tests {
     #[test]
     fn a_channel_id_is_found_in_a_channel_page() {
         let html = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/pages/youtube-handle.html"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("testdata/pages/youtube-handle.html"),
         )
         .unwrap();
         let id = channel_id_in_page(&html).expect("the fixture carries an id");
@@ -796,7 +804,7 @@ mod tests {
     }
 
     #[test]
-    fn yt_dlp_printing_NA_for_a_name_is_not_a_name() {
+    fn yt_dlp_printing_a_placeholder_for_a_name_is_not_a_name() {
         let got = parse_yt_dlp_line(&format!("{ID}\tNA\n")).unwrap();
         assert_eq!(got.channel.as_str(), ID);
         assert!(got.title.is_none());
