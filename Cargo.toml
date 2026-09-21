@@ -124,6 +124,13 @@ tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
 
+# `list --json`, and nothing else. Named as a direct dependency although it
+# is already in the tree under `feed-rs` -- which parses JSON Feed with it --
+# because the alternative is a hand-rolled writer, and a hand-rolled writer
+# is how a program comes to emit something that is not quite JSON the first
+# time a feed title contains a quotation mark.
+serde_json = "1"
+
 # The channels between the window, the db thread and the net pool. The UI loop
 # is synchronous and drains events once per frame; there is no async runtime in
 # this program, because a handful of blocking fetches on their own threads is
