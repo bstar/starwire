@@ -1,21 +1,28 @@
 //! The window.
 //!
-//! **A stub.** The column, the stack, the reader and everything else the
-//! design calls for land in a later work package; what is here is enough for
-//! `starwire` with no arguments to say so and exit cleanly rather than to
-//! panic or to print nothing.
+//! **Half a stub.** The foundations are here -- the stack, the layout
+//! arithmetic, the key table, the reader's markdown pipeline and the theme
+//! roles -- and the application that draws with them lands in a later work
+//! package; [`run`] still says so and exits cleanly.
 //!
-//! When it does arrive, everything under here reaches `ratatui`,
-//! `crossterm`, `ratatui-image` and `image` through `starkit::` and never as
-//! a direct dependency -- see `AGENTS.md` -- and it talks to the core only
-//! through `wire::Handle` and the read side of `wire::State`. Nothing in
-//! `src/wire/` will know it exists; there is a test in `wire/mod.rs` that
-//! makes sure of it.
+//! Everything under here reaches ratatui, crossterm, ratatui-image and image
+//! through `starkit::` rather than depending on any of them directly, which
+//! is what keeps one copy of each in the tree -- see `AGENTS.md`. There is a
+//! grep test at the bottom of this file that says so, and a line that has to
+//! mention one of the four in prose exempts itself with the marker
+//! `VIA-STARKIT`, which is how this paragraph and the test's own list of
+//! forbidden strings get past it. VIA-STARKIT
+//!
+//! The dependency runs one way only: this talks to the core through
+//! `wire::Handle` and the read side of `wire::State`, and nothing in
+//! `src/wire/` knows it exists.
 
 use std::io::Write as _;
 use std::path::Path;
 
 use anyhow::Result;
+
+pub mod keymap;
 
 /// Say what is and is not here, and exit 0.
 ///
