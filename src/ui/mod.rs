@@ -23,6 +23,7 @@ use std::path::Path;
 use anyhow::Result;
 
 pub mod keymap;
+pub mod layout;
 pub mod panels;
 pub mod stack;
 
