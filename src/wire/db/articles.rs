@@ -28,16 +28,26 @@ pub(super) fn create_pending(
     policy: Policy,
     parsed: &ParsedEntry,
 ) -> Result<()> {
-    let markdown = parsed
-        .content_html
-        .as_deref()
-        .map(|html| crate::wire::extract::from_feed_content(html, parsed.url.as_deref()))
-        .filter(|md| !md.trim().is_empty());
     let status = match policy {
         Policy::Extract => ArticleStatus::Pending,
         Policy::Video => ArticleStatus::NotApplicable,
         Policy::FeedContent => ArticleStatus::FeedContent,
     };
+    let markdown = parsed
+        .content_html
+        .as_deref()
+        .map(|html| crate::wire::extract::from_feed_content(html, parsed.url.as_deref()))
+        .filter(|md| !md.trim().is_empty())
+        // A video with no description has to carry something: it is complete
+        // on creation, nothing will ever be fetched for it, and eight of the
+        // videos in the reference database are Shorts with no description at
+        // all -- every one of which read as a blank page. The title is what
+        // there is.
+        .or_else(|| {
+            (policy == Policy::Video && !parsed.title.trim().is_empty()).then(|| {
+                crate::wire::extract::from_feed_content(&parsed.title, parsed.url.as_deref())
+            })
+        });
     conn.execute(
         "INSERT INTO article(entry_id, status, title, markdown, byline, source_url, extracted_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -670,6 +680,45 @@ mod tests {
         assert_eq!(view.status, ArticleStatus::NotApplicable);
         assert!(view.markdown.contains("What it is about."));
         assert_eq!(pending_count(&db).unwrap(), 0, "a video is never fetched");
+    }
+
+    #[test]
+    fn a_video_with_no_description_reads_as_its_title_rather_than_as_nothing() {
+        let mut db = Db::open_in_memory().unwrap();
+        let feed = feeds::add(
+            &db,
+            "https://www.youtube.com/feeds/videos.xml?channel_id=UCb",
+            None,
+            FeedKind::Youtube,
+            None,
+            None,
+        )
+        .unwrap()
+        .id();
+        entries::upsert_parsed(
+            &mut db,
+            feed,
+            FeedKind::Youtube,
+            &ParsedFeed {
+                entries: vec![ParsedEntry {
+                    guid: "s".into(),
+                    url: Some("https://www.youtube.com/shorts/abc".into()),
+                    title: "Ninety seconds on a lathe".into(),
+                    content_html: None,
+                    video_id: Some("abc".into()),
+                    ..ParsedEntry::default()
+                }],
+                ..ParsedFeed::default()
+            },
+        )
+        .unwrap();
+        let view = get(&db, first(&db)).unwrap().unwrap();
+        assert_eq!(view.status, ArticleStatus::NotApplicable);
+        assert!(
+            view.markdown.contains("Ninety seconds on a lathe"),
+            "{:?}",
+            view.markdown
+        );
     }
 
     #[test]

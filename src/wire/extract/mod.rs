@@ -420,11 +420,57 @@ fn transport_is_transient(error: &super::net::NetError) -> bool {
 /// and nothing else ever needs to happen.
 pub fn from_feed_content(html: &str, url: Option<&str>) -> String {
     let base = url.and_then(|u| Url::parse(u).ok());
-    // A feed's `<description>` is allowed to be plain text rather than HTML.
-    // The converter handles both -- text with no tags in it comes back as
-    // itself -- so there is no sniffing to do here.
-    let md = markdown::to_markdown(html, base.as_ref()).unwrap_or_else(|_| html.to_string());
+    // A feed's `<description>` is allowed to be plain text rather than HTML,
+    // and 429 of the 431 video entries in the reference database are: a
+    // YouTube description, laid out with blank lines and single newlines,
+    // which the converter has no way to see. 322 of them arrived in the
+    // reader as one unbroken paragraph.
+    let md = if is_plain_text(html) {
+        plain_text(html)
+    } else {
+        markdown::to_markdown(html, base.as_ref()).unwrap_or_else(|_| html.to_string())
+    };
     normalise::normalise(&md, base.as_ref(), normalise::Options::default())
+}
+
+/// Whether a feed's text carries no markup at all.
+///
+/// Looks for a `<` that begins a tag rather than for a `<` -- a description
+/// saying `a < b` or `<3` is still plain text, and those are not rare in a
+/// YouTube description.
+fn is_plain_text(text: &str) -> bool {
+    !text.as_bytes().windows(2).any(|pair| {
+        pair[0] == b'<' && (pair[1].is_ascii_alphabetic() || pair[1] == b'/' || pair[1] == b'!')
+    })
+}
+
+/// Plain text as markdown that keeps the shape it was written in.
+///
+/// A blank line is a paragraph break, as it is everywhere. A single newline
+/// is a *hard* break, because in a description written by hand it is a line
+/// the author chose -- a list of chapter times, a row of links, an address.
+/// Reflowing those into a paragraph is what the reader used to do.
+fn plain_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 16);
+    let mut first = true;
+    for paragraph in text.split("\n\n") {
+        let lines: Vec<&str> = paragraph
+            .lines()
+            .map(str::trim_end)
+            .filter(|line| !line.trim().is_empty())
+            .collect();
+        if lines.is_empty() {
+            continue;
+        }
+        if !first {
+            out.push_str("\n\n");
+        }
+        first = false;
+        // A trailing backslash is a hard break; `normalise::collapse` knows
+        // to keep one and to take off the last, which breaks nothing.
+        out.push_str(&lines.join("\\\n"));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -716,6 +762,48 @@ mod tests {
     fn a_feeds_plain_text_description_survives_as_itself() {
         let got = from_feed_content("What the video is about.", None);
         assert_eq!(got, "What the video is about.");
+    }
+
+    /// What 322 of the 410 YouTube descriptions in the reference database
+    /// arrived as: one paragraph, because every newline the author wrote was
+    /// reflowed away.
+    #[test]
+    fn a_plain_text_description_keeps_the_lines_it_was_written_with() {
+        let got = from_feed_content(
+            "\"A quotation.\"\n\nSomebody said it.\n\n\
+             » Subscribe: https://example.org/s\n\
+             » The newsletter: https://example.org/n\n\
+             » On the radio: https://example.org/r",
+            None,
+        );
+        let lines: Vec<&str> = got.lines().collect();
+        assert_eq!(lines[0], "\"A quotation.\"");
+        assert_eq!(lines[1], "");
+        assert_eq!(lines[2], "Somebody said it.");
+        assert!(
+            lines[4].ends_with('\\'),
+            "the three links are three lines, not one paragraph: {got:?}"
+        );
+        assert!(lines[5].ends_with('\\'), "{got:?}");
+        assert!(
+            !lines[6].ends_with('\\'),
+            "the last line of a paragraph breaks nothing: {got:?}"
+        );
+    }
+
+    #[test]
+    fn a_description_that_mentions_a_less_than_sign_is_still_plain_text() {
+        assert!(is_plain_text("a < b, and 3 < 4"));
+        assert!(is_plain_text("I <3 this"));
+        assert!(!is_plain_text("<p>Markup.</p>"));
+        assert!(!is_plain_text("Text with <br> in it"));
+        assert!(!is_plain_text("<!-- a comment -->"));
+
+        // And the plain one keeps its punctuation rather than gaining
+        // markup's escapes.
+        let got = from_feed_content("Comparing a < b, on two\nlines.", None);
+        assert!(got.contains("a < b"), "{got}");
+        assert!(got.contains("two\\\nlines."), "{got:?}");
     }
 
     #[test]
