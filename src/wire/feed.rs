@@ -163,10 +163,13 @@ impl ArticleStatus {
         self as i64
     }
 
-    /// Whether another attempt would be worth making. Only `Pending` is; a
-    /// `Failed` row is retried on request (`e` in the reader,
-    /// `Command::Extract`) rather than on every refresh, because the usual
-    /// reason is a paywall and retrying it hourly helps nobody.
+    /// Whether another attempt is due without anybody asking for one.
+    ///
+    /// Only `Pending`. A `Failed` row comes back only when its reason was
+    /// transient -- a 429, a 5xx or a timeout, which `article.retry_after`
+    /// records and `db::articles::pending` reads -- or when somebody asks
+    /// with `e` in the reader. The usual reason is a paywall, and retrying a
+    /// paywall hourly helps nobody.
     pub fn is_pending(self) -> bool {
         matches!(self, Self::Pending)
     }

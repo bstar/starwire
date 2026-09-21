@@ -129,9 +129,19 @@ CREATE TABLE IF NOT EXISTS article (
   source_url   TEXT,
   extracted_at INTEGER,
   attempts     INTEGER NOT NULL DEFAULT 0,
-  error        TEXT
+  error        TEXT,
+  -- When a failure is worth another attempt, and NULL when it is not. A 429,
+  -- a 5xx and a timeout are facts about today; a 401, a 403 and a page that
+  -- does not read like an article are facts about the page.
+  retry_after  INTEGER
 );
 CREATE INDEX IF NOT EXISTS article_pending_idx ON article(status) WHERE status = 0;
+-- There is deliberately no index on `retry_after`, which the other half of
+-- the extraction queue reads. Two reasons, and the second is the one to
+-- remember: the failed rows are a twentieth of a table measured in thousands,
+-- and this batch runs *before* `migrate`, so an index over a column a
+-- migration adds cannot live here at all -- on a file from the previous
+-- version the column is not there yet when these statements run.
 
 -- External-content FTS5: the index holds the tokens and the `article` table
 -- holds the text, rather than a second copy of every article in the file.

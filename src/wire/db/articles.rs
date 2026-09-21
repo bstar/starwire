@@ -63,13 +63,28 @@ pub(super) fn create_pending(
 ///
 /// `attempts` is incremented rather than set, because the value that matters
 /// is how many times this entry has cost a request: three is where
-/// `extract::run` stops trying, and resetting it on each attempt would make
+/// [`MAX_ATTEMPTS`] stops trying, and resetting it on each attempt would make
 /// a page that fails in a new way every time cost requests for ever.
 pub fn put(db: &Db, entry: EntryId, result: &ArticleResult) -> Result<()> {
+    let attempts: i64 = db
+        .conn
+        .query_row(
+            "SELECT attempts FROM article WHERE entry_id = ?1",
+            [entry.0],
+            |r| r.get(0),
+        )
+        .optional()?
+        .unwrap_or(0)
+        + 1;
+    let retry_after = result
+        .retry_in_secs
+        .filter(|_| attempts < MAX_ATTEMPTS)
+        .map(|base| now() + backoff_secs(base, attempts));
+
     db.conn.execute(
         "INSERT INTO article(entry_id, status, title, markdown, byline, site_name, image_url,
-                             excerpt, source_url, extracted_at, attempts, error)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11)
+                             excerpt, source_url, extracted_at, attempts, error, retry_after)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11, ?12)
          ON CONFLICT(entry_id) DO UPDATE SET
            status       = excluded.status,
            title        = COALESCE(excluded.title, article.title),
@@ -81,7 +96,8 @@ pub fn put(db: &Db, entry: EntryId, result: &ArticleResult) -> Result<()> {
            source_url   = COALESCE(excluded.source_url, article.source_url),
            extracted_at = excluded.extracted_at,
            attempts     = article.attempts + 1,
-           error        = excluded.error",
+           error        = excluded.error,
+           retry_after  = excluded.retry_after",
         params![
             entry.0,
             result.status.as_i64(),
@@ -94,9 +110,24 @@ pub fn put(db: &Db, entry: EntryId, result: &ArticleResult) -> Result<()> {
             result.source_url,
             now(),
             result.error,
+            retry_after,
         ],
     )?;
     Ok(())
+}
+
+/// How long a transient failure waits, doubling per attempt already spent.
+///
+/// The same shape as the per-feed backoff in `db::feeds`, and capped the same
+/// way: whatever the base, a third attempt is never more than a day out. The
+/// cap matters because the base is a configured number and somebody's
+/// `refresh_minutes` is a day.
+pub fn backoff_secs(base: i64, attempts: i64) -> i64 {
+    const DAY: i64 = 24 * 60 * 60;
+    let shift = attempts.clamp(1, 16) as u32;
+    base.max(1)
+        .saturating_mul(1i64.checked_shl(shift).unwrap_or(i64::MAX))
+        .clamp(60, DAY)
 }
 
 /// One entry's text, as the reader shows it.
@@ -133,8 +164,23 @@ pub fn get(db: &Db, entry: EntryId) -> Result<Option<ArticleView>> {
 ///
 /// Three, and not configurable: a page that has failed three times is a
 /// paywall, a login wall or a site that does not want to be read by this,
-/// and the answer to all three is `o` rather than a fourth request.
+/// and the answer to all three is `o` rather than a fourth request. It is a
+/// real ceiling as of 0.0.2 -- until the retry classes below existed, nothing
+/// but `e` ever offered a failed row again and this number never came up.
 pub const MAX_ATTEMPTS: i64 = 3;
+
+/// The rows the extraction queue is allowed to take.
+///
+/// Two kinds: a page nothing has been tried on, and a failure whose reason
+/// was a fact about today rather than about the page -- a 429, a 5xx or a
+/// timeout, which `extract::run` marks by giving the result a
+/// `retry_in_secs` and `put` turns into the moment named here. Everything
+/// else stays where it is: retrying a 403 hourly costs a request and helps
+/// nobody, and `e` in the reader is there for the case where somebody
+/// disagrees.
+const QUEUE_WHERE: &str = "a.attempts < ?1 AND e.url IS NOT NULL
+     AND (a.status = 0
+          OR (a.status = 3 AND a.retry_after IS NOT NULL AND a.retry_after <= ?2))";
 
 /// Entries whose page is still worth fetching, newest first.
 ///
@@ -143,15 +189,16 @@ pub const MAX_ATTEMPTS: i64 = 3;
 /// its first minutes on last week's articles while the ones just fetched sat
 /// pending.
 pub fn pending(db: &Db, limit: usize) -> Result<Vec<(EntryId, String)>> {
-    let mut stmt = db.conn.prepare(
+    let sql = format!(
         "SELECT a.entry_id, e.url FROM article a
          JOIN entry e ON e.id = a.entry_id
-         WHERE a.status = 0 AND a.attempts < ?1 AND e.url IS NOT NULL
+         WHERE {QUEUE_WHERE}
          ORDER BY COALESCE(e.published, e.fetched_at) DESC, e.id DESC
-         LIMIT ?2",
-    )?;
+         LIMIT ?3"
+    );
+    let mut stmt = db.conn.prepare(&sql)?;
     let rows = stmt
-        .query_map(params![MAX_ATTEMPTS, limit as i64], |r| {
+        .query_map(params![MAX_ATTEMPTS, now(), limit as i64], |r| {
             Ok((EntryId(r.get(0)?), r.get::<_, String>(1)?))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -160,12 +207,13 @@ pub fn pending(db: &Db, limit: usize) -> Result<Vec<(EntryId, String)>> {
 
 /// How many entries are still waiting to be extracted, for the status line.
 pub fn pending_count(db: &Db) -> Result<i64> {
-    Ok(db.conn.query_row(
+    let sql = format!(
         "SELECT COUNT(*) FROM article a JOIN entry e ON e.id = a.entry_id
-         WHERE a.status = 0 AND a.attempts < ?1 AND e.url IS NOT NULL",
-        [MAX_ATTEMPTS],
-        |r| r.get(0),
-    )?)
+         WHERE {QUEUE_WHERE}"
+    );
+    Ok(db
+        .conn
+        .query_row(&sql, params![MAX_ATTEMPTS, now()], |r| r.get(0))?)
 }
 
 /// Turn what somebody typed into an FTS5 query.
@@ -375,6 +423,107 @@ mod tests {
             !left.iter().any(|(e, _)| *e == id),
             "three failures and it is left alone"
         );
+    }
+
+    /// The retry classes, which is the whole of WP-7's second item: a 429
+    /// comes back, a 403 does not, and neither costs a request before its
+    /// time.
+    #[test]
+    fn a_transient_failure_comes_round_again_and_a_permanent_one_does_not() {
+        let db = seeded();
+        let rows = entries::page(&db, &Selection::All, false, 0, 10)
+            .unwrap()
+            .rows;
+        let (transient, permanent) = (rows[0].id, rows[1].id);
+
+        put(
+            &db,
+            transient,
+            &ArticleResult {
+                status: ArticleStatus::Failed,
+                error: Some("the site answered 429".into()),
+                retry_in_secs: Some(900),
+                ..ArticleResult::default()
+            },
+        )
+        .unwrap();
+        put(
+            &db,
+            permanent,
+            &ArticleResult {
+                status: ArticleStatus::Failed,
+                error: Some("the site answered 403".into()),
+                ..ArticleResult::default()
+            },
+        )
+        .unwrap();
+
+        // Neither is offered yet: the 429 has a delay to sit out and the 403
+        // has nothing to wait for.
+        let queued: Vec<EntryId> = pending(&db, 10)
+            .unwrap()
+            .into_iter()
+            .map(|(e, _)| e)
+            .collect();
+        assert!(queued.is_empty(), "{queued:?}");
+
+        // With its delay passed, the 429 rejoins the queue and the 403 stays
+        // where it is.
+        db.conn
+            .execute(
+                "UPDATE article SET retry_after = ?2 WHERE entry_id = ?1",
+                params![transient.0, now() - 1],
+            )
+            .unwrap();
+        let queued: Vec<EntryId> = pending(&db, 10)
+            .unwrap()
+            .into_iter()
+            .map(|(e, _)| e)
+            .collect();
+        assert_eq!(queued, vec![transient]);
+        assert_eq!(pending_count(&db).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_transient_failure_stops_being_retried_at_the_attempt_ceiling() {
+        let db = seeded();
+        let id = first(&db);
+        for _ in 0..MAX_ATTEMPTS {
+            put(
+                &db,
+                id,
+                &ArticleResult {
+                    status: ArticleStatus::Failed,
+                    error: Some("timeout: global".into()),
+                    retry_in_secs: Some(900),
+                    ..ArticleResult::default()
+                },
+            )
+            .unwrap();
+        }
+        let retry: Option<i64> = db
+            .conn
+            .query_row(
+                "SELECT retry_after FROM article WHERE entry_id = ?1",
+                [id.0],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(retry, None, "three attempts is where it is left alone");
+        assert!(
+            !pending(&db, 10).unwrap().iter().any(|(e, _)| *e == id),
+            "and it is not offered again"
+        );
+    }
+
+    #[test]
+    fn the_delay_doubles_per_attempt_and_stops_at_a_day() {
+        assert_eq!(backoff_secs(900, 1), 1800);
+        assert_eq!(backoff_secs(900, 2), 3600);
+        assert_eq!(backoff_secs(900, 3), 7200);
+        assert_eq!(backoff_secs(900, 20), 24 * 60 * 60);
+        assert_eq!(backoff_secs(0, 1), 60, "a zero base is still a minute");
+        assert_eq!(backoff_secs(i64::MAX, 1), 24 * 60 * 60);
     }
 
     #[test]

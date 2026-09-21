@@ -91,6 +91,7 @@ impl RuntimeSettings {
             max_article_bytes: self.max_article_bytes,
             max_markdown_bytes: self.max_markdown_bytes,
             images: self.images,
+            retry_base_secs: self.refresh_minutes as i64 * 60,
         }
     }
 }

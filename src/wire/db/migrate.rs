@@ -55,6 +55,7 @@ pub fn migrate(conn: &Connection, from: i32) -> Result<()> {
 /// Everything here is a change `SCHEMA` cannot express by itself: a column on
 /// a table that already exists, and a value rewritten in place.
 fn one_to_two(conn: &Connection) -> Result<()> {
+    add_column(conn, "article", "retry_after", "INTEGER")?;
     backfill_failed_markdown(conn)?;
     Ok(())
 }

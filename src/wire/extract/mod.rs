@@ -108,6 +108,17 @@ pub struct ArticleResult {
     pub excerpt: Option<String>,
     pub source_url: Option<String>,
     pub error: Option<String>,
+    /// How long to wait before another attempt is worth making, in seconds,
+    /// where one is worth making at all.
+    ///
+    /// `None` is the ordinary case and means never: a 401, a 403, a 404 and a
+    /// page that does not read like an article are all facts about the page
+    /// rather than about today, and a browser's user agent is measured to get
+    /// the same three codes. `Some` is a 429, a 5xx or a timeout -- twenty-four
+    /// of the eighty-five failures in the reference database -- and
+    /// `db::articles::put` turns it into the moment the entry rejoins the
+    /// queue, doubling it for each attempt already spent.
+    pub retry_in_secs: Option<i64>,
 }
 
 /// What `run` needs to know beyond the URL.
@@ -116,6 +127,11 @@ pub struct Limits {
     pub max_article_bytes: u64,
     pub max_markdown_bytes: usize,
     pub images: bool,
+    /// The first delay after a transient failure, in seconds. Doubled per
+    /// attempt by `db::articles::put`; the refresh interval, because a reader
+    /// who refreshes every fifteen minutes has said what "soon" means to
+    /// them.
+    pub retry_base_secs: i64,
 }
 
 impl Default for Limits {
@@ -125,6 +141,7 @@ impl Default for Limits {
             max_article_bytes: cfg.max_article_bytes,
             max_markdown_bytes: cfg.max_markdown_bytes,
             images: cfg.images,
+            retry_base_secs: super::FetchConfig::default().refresh_minutes as i64 * 60,
         }
     }
 }
@@ -135,6 +152,7 @@ impl From<&super::ArticlesConfig> for Limits {
             max_article_bytes: cfg.max_article_bytes,
             max_markdown_bytes: cfg.max_markdown_bytes,
             images: cfg.images,
+            ..Self::default()
         }
     }
 }
@@ -154,13 +172,21 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
 
     let response = match http.get(&parsed, &RequestOptions::page(limits.max_article_bytes)) {
         Ok(r) => r,
-        Err(e) => return Ok(failed(url, e.to_string())),
+        Err(e) => {
+            let retry = transport_is_transient(&e).then_some(limits.retry_base_secs);
+            return Ok(failed(url, e.to_string()).retrying(retry));
+        }
     };
     if !response.is_ok() {
-        return Ok(failed(
-            url,
-            format!("the site answered {}", response.status),
-        ));
+        let retry = status_is_transient(response.status).then(|| {
+            // A server that says how long to wait is believed where it asks
+            // for longer than the delay this would have chosen anyway.
+            response
+                .retry_after
+                .unwrap_or(0)
+                .max(limits.retry_base_secs)
+        });
+        return Ok(failed(url, format!("the site answered {}", response.status)).retrying(retry));
     }
 
     // A server that answers a request for HTML with a PDF or an image is
@@ -213,6 +239,7 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
         excerpt: extracted.excerpt,
         source_url: Some(final_url.to_string()),
         error: None,
+        retry_in_secs: None,
     })
 }
 
@@ -223,6 +250,40 @@ fn failed(url: &str, reason: String) -> ArticleResult {
         source_url: Some(url.to_string()),
         error: Some(reason),
         ..ArticleResult::default()
+    }
+}
+
+impl ArticleResult {
+    /// Say that this failure is worth another attempt after `secs`.
+    fn retrying(mut self, secs: Option<i64>) -> Self {
+        self.retry_in_secs = secs;
+        self
+    }
+}
+
+/// Whether a status code is a fact about today rather than about the page.
+///
+/// Measured rather than assumed: of the eighty-five failures in the reference
+/// database, the seventeen 429s were one host being asked too fast and the
+/// 401s, 402s and 403s answered a browser's user agent with the same code.
+/// So a 429 and a 5xx come back and the rest do not.
+fn status_is_transient(status: u16) -> bool {
+    status == 429 || (500..600).contains(&status)
+}
+
+/// And the same question for a failure that never reached a status code.
+///
+/// A timeout is the one worth retrying: six of the reference failures were
+/// heavy pages behind redirect wrappers, and the same page fetched again
+/// without the queue behind it usually answers. A refused connection, a
+/// certificate that does not verify and a body over the cap are not.
+fn transport_is_transient(error: &super::net::NetError) -> bool {
+    match error {
+        super::net::NetError::TooLarge(_) | super::net::NetError::NoReplay(_) => false,
+        super::net::NetError::Transport(text) => {
+            let text = text.to_ascii_lowercase();
+            text.contains("timeout") || text.contains("timed out")
+        }
     }
 }
 
