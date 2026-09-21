@@ -165,11 +165,18 @@ fn collapse(markdown: &str) -> String {
     let mut blank_run = 0usize;
     let mut in_code = false;
     for line in markdown.lines() {
-        let trimmed = line.trim_end();
+        let mut trimmed = line.trim_end();
         // Inside a fenced block every line is the author's, blank ones
         // included: collapsing them would change what the code means.
         if trimmed.trim_start().starts_with("```") {
             in_code = !in_code;
+        }
+        // A line that is nothing but a hard break has nothing to break, and
+        // on screen it is a lone backslash where a blank line should be. A
+        // run of `<br>` tags is how half the feeds in a real list spell a
+        // paragraph, so this is not a rare shape.
+        if !in_code && !trimmed.trim().is_empty() && trimmed.trim().bytes().all(|b| b == b'\\') {
+            trimmed = "";
         }
         if !in_code && trimmed.trim().is_empty() {
             blank_run += 1;
@@ -411,6 +418,12 @@ mod tests {
         // Two backslashes are an escaped backslash, which the author wrote.
         let got = collapse("Ends in a backslash: \\\\\n\nAfter.");
         assert!(got.contains("backslash: \\\\"), "{got:?}");
+
+        // A run of `<br>` tags, which is how half the feeds in a real list
+        // spell a paragraph break: three breaks in a row become one blank
+        // line rather than three lone backslashes.
+        let got = collapse("**A headline** \\\n\\\n\\\n\\\nThe story.");
+        assert_eq!(got, "**A headline**\n\nThe story.", "{got:?}");
     }
 
     #[test]
