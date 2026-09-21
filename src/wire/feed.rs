@@ -342,19 +342,27 @@ pub fn from_parsed(parsed: feed_rs::model::Feed) -> ParsedFeed {
         .map(|l| l.href.clone());
 
     ParsedFeed {
-        title: parsed.title.map(|t| clean_text(&t.content)).filter(nonempty),
+        title: parsed
+            .title
+            .map(|t| clean_text(&t.content))
+            .filter(|s| nonempty(s)),
         site_url,
         entries: parsed.entries.into_iter().map(entry_from_parsed).collect(),
     }
 }
 
 fn entry_from_parsed(entry: feed_rs::model::Entry) -> ParsedEntry {
+    // Through `clean_url`, which is what makes this string a key: two links
+    // to one article that differ only in which newsletter they came from are
+    // one article, and the campaign parameters a feed puts on its own links
+    // would otherwise make the same page a different entry in every feed
+    // that carried it.
     let url = entry
         .links
         .iter()
         .find(|l| l.rel.as_deref() == Some("alternate"))
         .or_else(|| entry.links.first())
-        .map(|l| l.href.clone());
+        .map(|l| crate::wire::extract::normalise::clean_url(&l.href));
 
     // The body, in order of preference: `<content>`, then `<summary>`. A
     // summary feed has only the second; a full-text feed has both and the
@@ -410,7 +418,7 @@ fn entry_from_parsed(entry: feed_rs::model::Entry) -> ParsedEntry {
             .authors
             .first()
             .map(|p| clean_text(&p.name))
-            .filter(nonempty),
+            .filter(|s| nonempty(s)),
         // `published` where the feed gives one, else `updated`: an Atom feed
         // is allowed to carry only the second, and an entry with no date at
         // all sorts by when it was first seen instead.
@@ -425,7 +433,7 @@ fn entry_from_parsed(entry: feed_rs::model::Entry) -> ParsedEntry {
     }
 }
 
-fn nonempty(s: &String) -> bool {
+fn nonempty(s: &str) -> bool {
     !s.is_empty()
 }
 
@@ -513,7 +521,10 @@ mod tests {
     #[test]
     fn a_feeds_kind_is_decided_by_its_host() {
         let cases = [
-            ("https://www.youtube.com/feeds/videos.xml?channel_id=UC1", FeedKind::Youtube),
+            (
+                "https://www.youtube.com/feeds/videos.xml?channel_id=UC1",
+                FeedKind::Youtube,
+            ),
             ("https://youtu.be/abc", FeedKind::Youtube),
             ("https://old.reddit.com/r/rust/.rss", FeedKind::Reddit),
             ("https://hnrss.org/frontpage", FeedKind::Hn),
@@ -640,6 +651,20 @@ mod tests {
             e.content_html.as_deref(),
             Some("What the video is about."),
             "media:description is the only body a YouTube entry has"
+        );
+    }
+
+    #[test]
+    fn an_entrys_link_has_its_tracking_parameters_taken_off() {
+        let feed = parse(
+            r#"<rss version="2.0"><channel><title>T</title><link>https://e.org/</link>
+<item><title>x</title><link>https://e.org/x?utm_source=feed&amp;page=2</link></item>
+</channel></rss>"#,
+        );
+        assert_eq!(
+            feed.entries[0].url.as_deref(),
+            Some("https://e.org/x?page=2"),
+            "the link is the key two feeds carrying one article are matched on"
         );
     }
 

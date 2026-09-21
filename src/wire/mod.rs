@@ -111,6 +111,10 @@ pub struct ArticlesConfig {
     /// feed: `hnrss/newcomments` alone is about a hundred thousand rows a
     /// month, and `keep_days` on its own would keep every one of them.
     pub max_entries_per_feed: usize,
+    /// Keep `![alt](src)` in the markdown. `false` leaves the alt text
+    /// behind as a paragraph instead. Nothing is downloaded either way in
+    /// 0.0.1 -- the reader draws a kept image as an `[image: alt]` line.
+    pub images: bool,
     pub page_size: usize,
 }
 
@@ -122,6 +126,7 @@ impl Default for ArticlesConfig {
             max_markdown_bytes: 524_288,
             keep_days: 30,
             max_entries_per_feed: 2000,
+            images: true,
             page_size: 200,
         }
     }
