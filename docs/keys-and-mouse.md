@@ -15,6 +15,14 @@ work from everywhere. While the filter has focus, every `alt+…` falls
 through it and so does `?`, so help and the appearance keys stay reachable
 mid-search; `esc` and `enter` are always the way out.
 
+`/` narrows the list under the keyboard, on every keystroke and without a
+query: the feed list in the sources, the headlines in the entries, and the two
+are independent of each other. In the reader there is no list to narrow —
+finding text inside an article is a different thing — so `/` there moves to
+the entries and filters those. `enter` keeps what it has narrowed to and
+hands the keys back; `esc` clears the filter, whether the field is still open
+or was put away with `enter`, and the status row says so in both states.
+
 In the reader `o` waits: `o` again opens the article itself in the browser,
 and a digit opens the link the article numbers with it. The number closes as
 soon as it cannot grow — `o1` in an article with three links opens link

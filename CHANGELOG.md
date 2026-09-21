@@ -5,6 +5,30 @@ and this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Changed
+
+- **The filter says how to leave.** While the `/` field is open the status
+  row stops offering the list's keys — every letter is typing, so none of
+  them would work — and says `enter keep`, `esc clear` and that `alt+…`
+  still works instead. The `/text` on the crumb row is drawn in the accent
+  while the field is up, so it reads as a mode rather than as a label, and a
+  filter kept with `enter` leaves `esc clear filter` at the head of that
+  module's hints for as long as it is narrowing the list. `esc` now clears a
+  kept filter as well as an open one, which is what that hint promises.
+
+### Fixed
+
+- **`/` filters the list you are looking at.** It always filtered the
+  entries, whichever module had the keyboard, against what
+  `docs/keys-and-mouse.md` said it did. In SOURCES it now narrows the feed
+  list where it stands, matched on the folder and feed names by the matcher
+  the entries use: the keyboard stays on the list, `enter` opens what is left
+  the way it always does, and the crumb row says `/text` where the summary
+  was. The two filters are independent of each other. In READER, where there
+  is no list to narrow, `/` still moves to ENTRIES and filters those — now
+  said out loud in the help and in `docs/the-stack.md` rather than left to be
+  discovered.
+
 ## [0.0.1] - 2026-09-21
 
 ### Added

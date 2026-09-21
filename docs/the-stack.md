@@ -104,6 +104,26 @@ already on screen, on every keystroke, without a query. "Where was that thing
 about lifetimes" and "which of these forty is the one about the borrow
 checker" are different questions.
 
+It narrows **the list under the keyboard**. In SOURCES that is the feed list
+itself, matched on the folder and feed names, and the keyboard stays there:
+`enter` opens whatever is left the way it always does. In ENTRIES it is the
+headlines, which is what the core calls the page's filter. The two are
+independent — a narrowed feed list does not touch a narrowed entry list — and
+the crumb row of whichever list is filtered says `/text` at its right — in
+SOURCES in place of the summary — so it is never a mystery why a list is
+short.
+
+In READER there is no list to narrow, so `/` moves to ENTRIES and filters
+those. Finding text inside an article is a different thing and is not this
+one.
+
+The field is a mode and says so. While it is open every letter is typing, the
+`/text` is drawn in the accent, and the status row says `enter keep` and `esc
+clear`; `alt+…` still falls through it, so changing focus or the theme works
+mid-filter. `enter` keeps the filter and hands the keys back to the list —
+the rows stay narrowed, and the status row keeps `esc clear filter` on it
+until they are not.
+
 ## Below the floor
 
 There is no degradation ladder. Below 60×21 the window draws one line saying
