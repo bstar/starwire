@@ -1,0 +1,11 @@
+# The feeds `--replay` puts in an empty database, so that
+#
+#   starwire --replay testdata/replay fetch
+#
+# has something to fetch on a machine that has never run this before. One URL
+# per line; a database that already has feeds in it is left alone.
+https://example.org/feed.xml
+https://workbench.example/rss.xml
+https://hnrss.org/frontpage
+https://old.reddit.com/r/example/.rss
+https://www.youtube.com/feeds/videos.xml?channel_id=UCXuqSBlHAE6Xw-yeJA0Tunw

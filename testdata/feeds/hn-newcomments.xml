@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic. The busiest feed in the reference list by a wide margin:
+     about a hundred thousand items a month, which is why retention has a
+     per-feed count cap as well as an age cutoff. -->
+<rss version="2.0">
+  <channel>
+    <title>Hacker News: New Comments</title>
+    <link>https://news.ycombinator.com/newcomments</link>
+    <description>Hacker News RSS</description>
+    <item>
+      <title>New comment by someone on "Why the borrow checker says no"</title>
+      <link>https://news.ycombinator.com/item?id=40000101</link>
+      <guid>https://news.ycombinator.com/item?id=40000101</guid>
+      <pubDate>Sat, 20 Sep 2026 09:45:00 +0000</pubDate>
+      <description>&lt;p&gt;I have read this four times and I still reach for clone.&lt;/p&gt;</description>
+    </item>
+    <item>
+      <title>New comment by another on "Why the borrow checker says no"</title>
+      <link>https://news.ycombinator.com/item?id=40000102</link>
+      <guid>https://news.ycombinator.com/item?id=40000102</guid>
+      <pubDate>Sat, 20 Sep 2026 09:46:00 +0000</pubDate>
+      <description>&lt;p&gt;Clone is fine. Ship it.&lt;/p&gt;</description>
+    </item>
+  </channel>
+</rss>

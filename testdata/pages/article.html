@@ -1,0 +1,43 @@
+<!doctype html>
+<!-- Synthetic. A page shaped like a real article: navigation above it, a
+     newsletter box and a footer below, and the piece in the middle. What
+     readability has to find, and what it has to leave behind. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Why the borrow checker says no: a field guide to lifetimes</title>
+<meta property="og:site_name" content="Example Journal">
+<meta property="og:title" content="Why the borrow checker says no">
+<meta property="og:image" content="https://example.org/cards/borrow-checker.png">
+<meta name="description" content="What the compiler is actually telling you.">
+</head>
+<body>
+<header><nav>
+  <a href="/">Example Journal</a>
+  <a href="/archive">Archive</a>
+  <a href="/about">About</a>
+  <a href="/feed.xml">Feed</a>
+</nav></header>
+
+<article>
+  <h1>Why the borrow checker says no: a field guide to lifetimes</h1>
+  <p class="byline">by Jane Example, 20 September 2026</p>
+<p>The borrow checker is not a wall. It is a very patient reviewer who has read every line you wrote and would like a word about three of them. Once you can hear what it is actually saying, most of the arguments stop.</p>
+<h2>Three rules</h2>
+<ul><li>Every value has exactly one owner.</li><li>You may borrow it, but not while it is being changed.</li><li>A borrow may not outlive the thing it borrows.</li></ul>
+<p>The third is the one that produces the error everybody remembers, and it is the one a diagram helps with least. What helps is naming the scopes out loud.</p>
+<pre><code class="language-rust">fn longest&lt;'a&gt;(a: &amp;'a str, b: &amp;'a str) -&gt; &amp;'a str {
+    if a.len() &gt; b.len() { a } else { b }
+}</code></pre>
+<blockquote><p>Lifetimes are not about how long a value lives. They are about how long a reference is allowed to.</p></blockquote>
+<p>The <a href="https://doc.rust-lang.org/nomicon/">Rustonomicon</a> is the long version, and the <a href="/posts/ownership">earlier post on ownership</a> is the short one. Between them there is very little left that a compiler error will surprise you with.</p>
+<p>None of this makes the first month easier. It makes the second month possible, which is a different and better claim, and it is the one worth making to somebody who is still reaching for clone on every other line.</p>
+</article>
+
+<aside class="newsletter">
+  <h3>Subscribe to the newsletter</h3>
+  <form action="/subscribe"><input name="email"><button>Sign up</button></form>
+</aside>
+<footer><p>Copyright 2026 Example Journal. All rights reserved.</p></footer>
+<script>console.log("analytics");</script>
+</body></html>

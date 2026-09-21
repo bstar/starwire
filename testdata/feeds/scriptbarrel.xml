@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic. What scriptbarrel.com serves for a channel: the same Atom
+     document YouTube does, from a different host. The feed list routes
+     seven channels through it, and its `name=` query parameter is the only
+     place those seven have a title before the first fetch. -->
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015"
+      xmlns:media="http://search.yahoo.com/mrss/"
+      xmlns="http://www.w3.org/2005/Atom">
+  <link rel="self" href="https://scriptbarrel.com/xml.cgi?channel_id=UCBa659QWEk1AI4Tg--mrJ2A&amp;name=Another%20Channel"/>
+  <id>yt:channel:UCBa659QWEk1AI4Tg--mrJ2A</id>
+  <yt:channelId>UCBa659QWEk1AI4Tg--mrJ2A</yt:channelId>
+  <title>Another Channel</title>
+  <link rel="alternate" href="https://www.youtube.com/channel/UCBa659QWEk1AI4Tg--mrJ2A"/>
+  <author>
+    <name>Another Channel</name>
+    <uri>https://www.youtube.com/channel/UCBa659QWEk1AI4Tg--mrJ2A</uri>
+  </author>
+  <published>2019-01-01T00:00:00+00:00</published>
+  <entry>
+    <id>yt:video:bbbbbbbbbbb</id>
+    <yt:videoId>bbbbbbbbbbb</yt:videoId>
+    <yt:channelId>UCBa659QWEk1AI4Tg--mrJ2A</yt:channelId>
+    <title>A second channel, proxied</title>
+    <link rel="alternate" href="https://www.youtube.com/watch?v=bbbbbbbbbbb"/>
+    <author>
+      <name>Another Channel</name>
+      <uri>https://www.youtube.com/channel/UCBa659QWEk1AI4Tg--mrJ2A</uri>
+    </author>
+    <published>2026-09-20T12:00:00+00:00</published>
+    <updated>2026-09-20T13:00:00+00:00</updated>
+    <media:group>
+      <media:title>A second channel, proxied</media:title>
+      <media:content url="https://www.youtube.com/v/bbbbbbbbbbb?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+      <media:thumbnail url="https://i.ytimg.com/vi/bbbbbbbbbbb/hqdefault.jpg" width="480" height="360"/>
+      <media:description>Ten minutes on why the thing in the wall is not, in fact, full of electrons moving very fast.</media:description>
+      <media:community>
+        <media:starRating count="1000" average="4.95" min="1" max="5"/>
+        <media:statistics views="123456"/>
+      </media:community>
+    </media:group>
+  </entry>
+</feed>

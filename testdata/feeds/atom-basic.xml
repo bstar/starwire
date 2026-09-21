@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic. Nothing here came off a real site: example.org is reserved by
+     RFC 2606 for exactly this. -->
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Journal</title>
+  <subtitle>Writing about programming, at length</subtitle>
+  <link rel="self" href="https://example.org/feed.xml"/>
+  <link rel="alternate" href="https://example.org/"/>
+  <id>https://example.org/</id>
+  <updated>2026-09-20T10:00:00Z</updated>
+
+  <entry>
+    <id>tag:example.org,2026:posts/borrow-checker</id>
+    <title>Why the borrow checker says no: a field guide to lifetimes</title>
+    <link rel="alternate" href="https://example.org/posts/borrow-checker?utm_source=feed"/>
+    <published>2026-09-20T09:00:00Z</published>
+    <updated>2026-09-20T09:00:00Z</updated>
+    <author><name>Jane Example</name></author>
+    <summary type="html">&lt;p&gt;A short summary the feed carries instead of the article.&lt;/p&gt;</summary>
+  </entry>
+
+  <entry>
+    <id>tag:example.org,2026:posts/unreadable</id>
+    <title>A page that will not give up an article</title>
+    <link rel="alternate" href="https://example.org/posts/unreadable"/>
+    <published>2026-09-19T09:00:00Z</published>
+    <updated>2026-09-19T09:00:00Z</updated>
+    <author><name>Jane Example</name></author>
+    <summary type="html">&lt;p&gt;Two sentences, and a link to the rest. That is all this feed carries.&lt;/p&gt;</summary>
+  </entry>
+
+  <entry>
+    <id>tag:example.org,2026:posts/full-text</id>
+    <title>A post whose feed carries the whole thing</title>
+    <link rel="alternate" href="https://example.org/posts/full-text"/>
+    <published>2026-09-18T09:00:00Z</published>
+    <updated>2026-09-18T09:00:00Z</updated>
+    <author><name>Sam Example</name></author>
+    <content type="html">&lt;h2&gt;All of it, in the feed&lt;/h2&gt;&lt;p&gt;Some feeds carry the whole article, and for those there is nothing to scrape: the text is already here and opening the entry is instant.&lt;/p&gt;&lt;p&gt;This one does.&lt;/p&gt;</content>
+  </entry>
+</feed>

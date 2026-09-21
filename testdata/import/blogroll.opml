@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic: a two-level list of the kind every reader exports. -->
+<opml version="2.0">
+  <head>
+    <title>Somebody else's subscriptions</title>
+    <dateCreated>Sat, 20 Sep 2026 10:00:00 GMT</dateCreated>
+  </head>
+  <body>
+    <outline text="Tech" title="Tech">
+      <outline text="Example Journal" title="Example Journal" type="rss"
+               xmlUrl="https://example.org/feed.xml" htmlUrl="https://example.org/"/>
+      <outline text="The Workbench" title="The Workbench" type="rss"
+               xmlUrl="https://workbench.example/rss.xml" htmlUrl="https://workbench.example/"/>
+    </outline>
+    <outline text="Video" title="Video">
+      <outline text="Example Channel" title="Example Channel" type="rss"
+               xmlUrl="https://www.youtube.com/feeds/videos.xml?channel_id=UCXuqSBlHAE6Xw-yeJA0Tunw"/>
+    </outline>
+    <outline text="A JSON Feed" title="A JSON Feed" type="rss"
+             xmlUrl="https://jsonfeed.example/feed.json"/>
+  </body>
+</opml>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Deliberately broken: an unclosed element and a stray ampersand. What a
+     server sends when a template half-rendered. Parsing this must fail
+     cleanly and be recorded against the feed, not stop a refresh. -->
+<rss version="2.0">
+  <channel>
+    <title>Half a feed & a stray ampersand
+    <link>https://broken.example/</link>
+    <item>
+      <title>An item that never closes
+    </channel>

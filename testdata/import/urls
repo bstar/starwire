@@ -1,0 +1,34 @@
+# Synthetic, in the shape of a real newsboat urls file: no tags, no titles,
+# and comment headers as the only grouping. Nothing here is a feed anybody
+# actually reads -- the channel ids are well-formed but arbitrary, and the
+# hosts are reserved for documentation.
+
+# Hacker News
+https://hnrss.org/frontpage
+https://hnrss.org/newcomments
+https://hnrss.org/show
+
+# Reddit feeds
+http://old.reddit.com/r/rust/.rss
+http://old.reddit.com/r/programming/.rss
+
+# News & Tech
+https://example.org/feed.xml
+https://workbench.example/rss.xml
+https://jsonfeed.example/feed.json
+https://tagged.example/feed.xml tech rust linux
+https://titled.example/feed.xml ~"A name from the file"
+
+# A saved search, which newsboat computes rather than fetches
+"query:Unread articles:unread = \"yes\""
+
+# A feed newsboat hides from its list, which is still a subscription
+!https://hidden.example/feed.xml
+
+# YouTube feeds
+https://www.youtube.com/feeds/videos.xml?channel_id=UCXuqSBlHAE6Xw-yeJA0Tunw
+https://www.youtube.com/feeds/videos.xml?channel_id=UCBa659QWEk1AI4Tg--mrJ2A
+https://www.youtube.com/feeds/videos.xml?channel_id=UC6nSFpj9HTCZ5t-N3Rm3-HA
+https://scriptbarrel.com/xml.cgi?channel_id=UCsXVk37bltHxD1rDPwtNM8Q&name=Kurzgesagt
+https://scriptbarrel.com/xml.cgi?channel_id=UC2C_jShtL725hvbm1arSV9w&name=CGP%20Grey
+https://scriptbarrel.com/xml.cgi?channel_id=UCHnyfMqiRRG1u-2MsSQLbXA&name=Veritasium

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic. An RSS 2.0 feed with no <guid> on one item, which is the
+     common case and the reason feed-rs synthesises one. -->
+<rss version="2.0">
+  <channel>
+    <title>The Workbench</title>
+    <link>https://workbench.example/</link>
+    <description>Notes from a workshop</description>
+    <lastBuildDate>Sat, 20 Sep 2026 08:00:00 GMT</lastBuildDate>
+    <item>
+      <title>Sharpening a plane iron</title>
+      <link>https://workbench.example/plane-iron</link>
+      <guid isPermaLink="false">workbench-0001</guid>
+      <pubDate>Sat, 20 Sep 2026 08:00:00 GMT</pubDate>
+      <author>tools@workbench.example (Alex Example)</author>
+      <description>&lt;p&gt;A honing guide is not cheating.&lt;/p&gt;</description>
+    </item>
+    <item>
+      <title>An item with no guid at all</title>
+      <link>https://workbench.example/no-guid</link>
+      <pubDate>Fri, 19 Sep 2026 08:00:00 GMT</pubDate>
+      <description>Plain text, not HTML, which RSS permits.</description>
+    </item>
+  </channel>
+</rss>

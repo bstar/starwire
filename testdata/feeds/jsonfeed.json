@@ -1,0 +1,23 @@
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "A JSON Feed",
+  "home_page_url": "https://jsonfeed.example/",
+  "feed_url": "https://jsonfeed.example/feed.json",
+  "items": [
+    {
+      "id": "1",
+      "url": "https://jsonfeed.example/one",
+      "title": "The first item",
+      "content_html": "<p>JSON Feed is a third format, and a feed list of any size has all three in it.</p>",
+      "date_published": "2026-09-20T07:00:00Z",
+      "authors": [{ "name": "Robin Example" }]
+    },
+    {
+      "id": "2",
+      "url": "https://jsonfeed.example/two",
+      "title": "The second item",
+      "content_text": "Plain text rather than HTML, which the format allows.",
+      "date_published": "2026-09-19T07:00:00Z"
+    }
+  ]
+}
