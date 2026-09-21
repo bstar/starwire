@@ -122,6 +122,18 @@ pub fn fetch(
     }
 
     let bytes = response.body.len();
+    // A 200 carrying a web page instead of a feed. Reddit does this when it
+    // is rate limiting: rather than a 429 it serves its own "take a break"
+    // HTML, and feed-rs then reports "no root element", which sends whoever
+    // reads the feed's error line looking for a broken feed instead of for
+    // a reader asking too often.
+    if looks_like_html(response.content_type.as_deref(), &response.body) {
+        return Ok(FetchOutcome::Failed {
+            error: "not a feed (HTML page; the site may be rate limiting)".into(),
+            status: Some(response.status),
+            retry_after: response.retry_after,
+        });
+    }
     let base = Url::parse(&response.final_url).unwrap_or(parsed);
     match parse(&response.body, Some(&base)) {
         Ok(feed) => Ok(FetchOutcome::Fetched {
@@ -138,6 +150,35 @@ pub fn fetch(
             retry_after: None,
         }),
     }
+}
+
+/// Whether a 200's body is a web page rather than a feed.
+///
+/// Two tests, because neither alone is enough: a server that declares
+/// `text/html` is believed, and a server that declares nothing useful --
+/// `application/octet-stream`, or no `Content-Type` at all -- is judged by
+/// what its first bytes say. The sniff is deliberately narrow: a doctype or
+/// an `<html` at the very start, past any leading whitespace and a byte
+/// order mark, and nothing cleverer. An Atom feed never begins either way,
+/// and a feed that merely *mentions* HTML in an entry is untouched.
+fn looks_like_html(content_type: Option<&str>, body: &[u8]) -> bool {
+    if content_type.is_some_and(|ct| {
+        ct.split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .eq_ignore_ascii_case("text/html")
+    }) {
+        return true;
+    }
+    let start = body.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(body);
+    let start: &[u8] = match start.iter().position(|b| !b.is_ascii_whitespace()) {
+        Some(at) => &start[at..],
+        None => return false,
+    };
+    let head = &start[..start.len().min(64)];
+    let head = String::from_utf8_lossy(head).to_ascii_lowercase();
+    head.starts_with("<!doctype html") || head.starts_with("<html")
 }
 
 /// A status code as something worth putting in a feed's error line.
@@ -237,6 +278,59 @@ mod tests {
         )
         .unwrap();
         assert!(out.is_failure(), "{out:?}");
+    }
+
+    /// What Reddit answers with when it is rate limiting: a 200 carrying its
+    /// own web page. The error line has to say that rather than feed-rs's
+    /// "no root element", which reads like a broken feed.
+    #[test]
+    fn a_web_page_where_a_feed_should_be_says_the_site_may_be_rate_limiting() {
+        let html = b"<!DOCTYPE html>\n<html><head><title>Too many requests</title></head>\
+                     <body><p>Take a break for a minute.</p></body></html>";
+        assert!(looks_like_html(Some("text/html; charset=utf-8"), html));
+        assert!(
+            looks_like_html(None, html),
+            "a server that declares nothing is judged by its first bytes"
+        );
+        assert!(looks_like_html(None, b"\xEF\xBB\xBF  \n<html lang=\"en\">"));
+
+        // And the outcome the fetch records.
+        let out = fetch(
+            &replay(),
+            // The replay directory's article page, served where a feed is
+            // being asked for: the same bytes, the same content type.
+            "https://example.org/posts/borrow-checker",
+            &Conditional::default(),
+            8_388_608,
+        )
+        .unwrap();
+        match out {
+            FetchOutcome::Failed { error, status, .. } => {
+                assert_eq!(
+                    error,
+                    "not a feed (HTML page; the site may be rate limiting)"
+                );
+                assert_eq!(status, Some(200));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_feed_is_never_mistaken_for_a_page() {
+        for name in ["atom-basic.xml", "rss2-basic.xml", "jsonfeed.json"] {
+            assert!(
+                !looks_like_html(Some("application/xml"), &fixture(name)),
+                "{name}"
+            );
+        }
+        assert!(!looks_like_html(None, b""));
+        assert!(!looks_like_html(None, b"   \n\t  "));
+        // An entry that talks about HTML is not an HTML page.
+        assert!(!looks_like_html(
+            None,
+            b"<?xml version=\"1.0\"?><rss><channel><item><description>&lt;html&gt;</description>"
+        ));
     }
 
     #[test]
