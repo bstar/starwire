@@ -267,6 +267,54 @@ fn a_replay_run_fetches_reads_and_prints_the_fixture_article() {
     assert_eq!(url.trim(), "https://example.org/posts/borrow-checker");
 }
 
+/// `fetch --no-extract` leaves every page unpulled, which is the shape an
+/// entry has between arriving and being extracted -- and the shape that used
+/// to make `show` print nothing at all.
+#[test]
+fn an_entry_with_nothing_behind_it_still_shows_its_header_and_says_why() {
+    let home = home();
+    let replay = testdata("replay");
+    stdout(
+        home.path(),
+        &[
+            "--replay",
+            replay.to_str().unwrap(),
+            "fetch",
+            "--no-extract",
+        ],
+    );
+
+    let unread = stdout(home.path(), &["list", "--unread"]);
+    let line = unread
+        .lines()
+        .find(|l| l.contains("Why the borrow checker says no"))
+        .unwrap_or_else(|| panic!("{unread}"));
+    let id = line.split_whitespace().next().expect("an entry id");
+
+    let shown = stdout(home.path(), &["show", id]);
+    assert!(
+        shown.contains("Why the borrow checker says no"),
+        "the header: {shown}"
+    );
+    assert!(shown.contains("pending"), "the status: {shown}");
+    assert!(
+        shown.contains("extraction pending"),
+        "and why there is no body: {shown}"
+    );
+
+    // `--markdown` is the pipe: nothing on stdout, and a zero exit.
+    let output = command(home.path())
+        .args(["show", id, "--markdown"])
+        .output()
+        .expect("running starwire show --markdown");
+    assert!(output.status.success(), "{:?}", output.status);
+    assert!(
+        output.stdout.is_empty(),
+        "{:?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
 #[test]
 fn a_replay_run_marks_a_video_as_a_video_and_never_fetches_it() {
     let home = home();

@@ -493,12 +493,53 @@ fn run_show(entry: i64, format: &cli::ShowFormat) -> Result<()> {
         .unwrap_or_default();
 
     if format.markdown {
-        let _ = print(&mut out, markdown.trim_end());
+        // Nothing, and a zero exit, when there is no markdown: `--markdown`
+        // is the pipe-friendly format, and an empty article is an empty
+        // stream rather than a blank line or an error.
+        if !markdown.trim().is_empty() {
+            let _ = print(&mut out, markdown.trim_end());
+        }
         return Ok(());
     }
 
-    // The default: a header a person can read, then the text.
-    let _ = print(&mut out, &row.title);
+    // The default: a header a person can read, then the text -- or, when
+    // there is no text, one line saying why there is none.
+    let _ = print(&mut out, &show_header(&row, article.as_ref()));
+    let _ = print(&mut out, "");
+    if markdown.trim().is_empty() {
+        let _ = print(&mut out, &no_body_reason(&row, article.as_ref()));
+    } else {
+        let _ = print(&mut out, markdown.trim_end());
+    }
+    Ok(())
+}
+
+/// What is stored for an entry, in one word, for the header's meta line.
+///
+/// A word rather than a sentence: the line it joins already carries the
+/// author, the feed and the date, and the sentence -- when there is one to
+/// make -- belongs where the article would have been.
+fn status_word(status: ArticleStatus) -> &'static str {
+    match status {
+        ArticleStatus::Pending => "pending",
+        ArticleStatus::Extracted => "extracted",
+        // A video's description and a post's body are the same thing from
+        // the reader's point of view: text the feed itself carried.
+        ArticleStatus::FeedContent | ArticleStatus::NotApplicable => "feed text",
+        ArticleStatus::Failed => "failed",
+    }
+}
+
+/// The title, who wrote it, where it came from, when, its link and what was
+/// made of it.
+///
+/// Built as a string rather than printed line by line so that it can be
+/// tested without a database or a terminal -- the case worth testing is an
+/// entry with nothing behind it, which is exactly the case that used to
+/// print nothing at all.
+fn show_header(row: &wire::feed::EntryRow, article: Option<&wire::feed::ArticleView>) -> String {
+    let status = article.map_or(row.article_status, |a| a.status);
+    let mut lines = vec![row.title.clone()];
     let mut meta = Vec::new();
     if let Some(author) = &row.author {
         meta.push(author.clone());
@@ -507,23 +548,38 @@ fn run_show(entry: i64, format: &cli::ShowFormat) -> Result<()> {
     if let Some(published) = row.published {
         meta.push(published.to_string());
     }
-    let _ = print(&mut out, &meta.join(" · "));
+    meta.push(status_word(status).to_string());
+    lines.push(meta.join(" · "));
     if let Some(url) = &row.url {
-        let _ = print(&mut out, url);
+        lines.push(url.clone());
     }
-    if let Some(article) = &article {
-        if article.status == ArticleStatus::Failed {
-            let reason = article.error.as_deref().unwrap_or("it did not yield");
-            let _ = print(&mut out, &format!("(the page was not extracted: {reason})"));
-        }
+    // A failure that still has the feed's own text behind it would otherwise
+    // lose its reason: the line below the header is only printed when there
+    // is nothing to read at all.
+    if status == ArticleStatus::Failed && article.is_some_and(|a| !a.markdown.trim().is_empty()) {
+        lines.push(format!("({})", failure_reason(article)));
     }
-    let _ = print(&mut out, "");
-    if markdown.trim().is_empty() {
-        let _ = print(&mut out, "(nothing has been read from this entry yet)");
-    } else {
-        let _ = print(&mut out, markdown.trim_end());
+    lines.join("\n")
+}
+
+/// Why there is no article to print, in one line.
+///
+/// Three answers, and all three are worth telling apart: a page nobody has
+/// pulled yet will fill in by itself, a page that failed will not, and a
+/// feed that carried no text of its own never had anything to show.
+fn no_body_reason(row: &wire::feed::EntryRow, article: Option<&wire::feed::ArticleView>) -> String {
+    match article.map_or(row.article_status, |a| a.status) {
+        ArticleStatus::Pending => "extraction pending".into(),
+        ArticleStatus::Failed => format!("extraction failed: {}", failure_reason(article)),
+        _ => "no content".into(),
     }
-    Ok(())
+}
+
+fn failure_reason(article: Option<&wire::feed::ArticleView>) -> String {
+    article
+        .and_then(|a| a.error.as_deref())
+        .unwrap_or("the page did not yield")
+        .to_string()
 }
 
 // ------------------------------------------------------------ add/remove ----
@@ -965,5 +1021,111 @@ mod tests {
     fn eliding_to_nothing_does_not_panic() {
         assert_eq!(elide("abc", 0), "…");
         assert_eq!(elide("", 0), "");
+    }
+
+    fn entry_row(status: ArticleStatus) -> wire::feed::EntryRow {
+        wire::feed::EntryRow {
+            id: wire::feed::EntryId(7),
+            feed_id: wire::feed::FeedId(1),
+            feed_title: "Example Journal".into(),
+            title: "A page that will not give up an article".into(),
+            author: Some("Jane Example".into()),
+            url: Some("https://example.org/posts/unreadable".into()),
+            published: None,
+            kind: EntryKind::Article,
+            read: false,
+            starred: false,
+            article_status: status,
+            thumbnail_url: None,
+        }
+    }
+
+    fn article(
+        status: ArticleStatus,
+        markdown: &str,
+        error: Option<&str>,
+    ) -> wire::feed::ArticleView {
+        wire::feed::ArticleView {
+            entry: wire::feed::EntryId(7),
+            title: "A page that will not give up an article".into(),
+            byline: None,
+            site_name: None,
+            url: None,
+            markdown: std::sync::Arc::from(markdown),
+            status,
+            image_url: None,
+            error: error.map(str::to_string),
+            extracted_at: None,
+        }
+    }
+
+    /// The header is printed whether or not there is anything behind it:
+    /// `show` on an entry whose page has not been pulled yet used to print
+    /// nothing at all, which looks exactly like a broken database.
+    #[test]
+    fn an_entry_with_no_markdown_still_has_a_header_and_a_reason() {
+        let row = entry_row(ArticleStatus::Pending);
+        let header = show_header(&row, None);
+        assert!(header.contains("will not give up"), "{header}");
+        assert!(
+            header.contains("Jane Example · Example Journal · pending"),
+            "{header}"
+        );
+        assert!(
+            header.contains("https://example.org/posts/unreadable"),
+            "{header}"
+        );
+        assert_eq!(no_body_reason(&row, None), "extraction pending");
+    }
+
+    #[test]
+    fn a_failure_says_what_went_wrong_and_an_empty_feed_says_there_was_nothing() {
+        let row = entry_row(ArticleStatus::Failed);
+        let failed = article(
+            ArticleStatus::Failed,
+            "",
+            Some("the page is mostly JavaScript"),
+        );
+        assert_eq!(
+            no_body_reason(&row, Some(&failed)),
+            "extraction failed: the page is mostly JavaScript"
+        );
+        assert!(
+            show_header(&row, Some(&failed)).lines().count() == 3,
+            "a failure with no text does not repeat its reason in the header"
+        );
+
+        // A failure that still has the feed's own text keeps its reason in
+        // the header, because the line below it is never reached.
+        let fallback = article(
+            ArticleStatus::Failed,
+            "Two sentences, and a link to the rest.",
+            Some("the page is mostly JavaScript"),
+        );
+        assert!(
+            show_header(&row, Some(&fallback)).contains("(the page is mostly JavaScript)"),
+            "{}",
+            show_header(&row, Some(&fallback))
+        );
+
+        let empty = entry_row(ArticleStatus::FeedContent);
+        assert_eq!(
+            no_body_reason(&empty, Some(&article(ArticleStatus::FeedContent, "", None))),
+            "no content"
+        );
+    }
+
+    #[test]
+    fn every_status_has_a_word_of_its_own() {
+        for status in [
+            ArticleStatus::Pending,
+            ArticleStatus::Extracted,
+            ArticleStatus::FeedContent,
+            ArticleStatus::Failed,
+            ArticleStatus::NotApplicable,
+        ] {
+            assert!(!status_word(status).is_empty());
+        }
+        assert_eq!(status_word(ArticleStatus::Extracted), "extracted");
     }
 }
