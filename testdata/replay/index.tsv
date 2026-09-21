@@ -12,6 +12,8 @@ https://example.org/posts/borrow-checker	../pages/article.html
 https://example.org/posts/unreadable	../pages/article-unreadable.html
 https://example.org/posts/paywalled	../pages/paywall-stub.html
 https://example.org/posts/lazy-pictures	../pages/lazy-images.html
+https://www.phoronix.com/review/a-long-test/1	../pages/paged-1.html
+https://www.phoronix.com/review/a-long-test/2	../pages/paged-2.html
 https://workbench.example/rss.xml	../feeds/rss2-basic.xml
 https://jsonfeed.example/feed.json	../feeds/jsonfeed.json
 https://hnrss.org/frontpage	../feeds/hn-frontpage.xml

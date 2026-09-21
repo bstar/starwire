@@ -226,15 +226,26 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
         Err(e) => return Ok(failed(final_url.as_str(), e.to_string())),
     };
 
+    let host = final_url.host_str().unwrap_or("").to_string();
+
+    // An article the site split across pages, put back together. Only where a
+    // rule says this site does that, and only while the pages stay on the
+    // same host and under the same path.
+    let mut article_html = extracted.content_html.clone();
+    article_html.push_str(&follow_pages(http, &html, &final_url, limits));
+
     // The pictures' addresses, before the converter -- which reads `src` and
     // nothing else, so a lazy-loaded page would otherwise reduce to a list of
     // spacers.
-    let content_html = images::sources(&extracted.content_html);
+    let content_html = images::sources(&article_html);
 
     let md = match markdown::to_markdown(&content_html, Some(&final_url)) {
         Ok(md) => md,
         Err(e) => return Ok(failed(final_url.as_str(), e.to_string())),
     };
+    // The site's own furniture, which readability kept because the site puts
+    // it inside the article.
+    let md = rules::strip(&md, &host);
     let md = normalise::normalise(
         &md,
         Some(&final_url),
@@ -256,7 +267,7 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
     // the reference database are four hundred to nine hundred bytes of free
     // sample each, and every one of them was counted as an article that had
     // been extracted.
-    if rules::is_paywall_stub(&md, final_url.host_str().unwrap_or("")) {
+    if rules::is_paywall_stub(&md, &host) {
         return Ok(ArticleResult {
             status: ArticleStatus::FeedContent,
             title: extracted.title,
@@ -265,7 +276,7 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
             // same two paragraphs, and the summary does not pretend to be
             // the article.
             markdown: None,
-            byline: extracted.byline,
+            byline: tidy_byline(extracted.byline, &host),
             site_name: extracted.site_name,
             image_url: extracted.image_url,
             excerpt: extracted.excerpt,
@@ -279,7 +290,7 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
         status: ArticleStatus::Extracted,
         title: extracted.title,
         markdown: Some(md),
-        byline: extracted.byline,
+        byline: tidy_byline(extracted.byline, &host),
         site_name: extracted.site_name,
         image_url: extracted.image_url,
         excerpt: extracted.excerpt,
@@ -287,6 +298,58 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
         error: None,
         retry_in_secs: None,
     })
+}
+
+/// Fetch the rest of an article a site split across pages.
+///
+/// Returns the extra HTML, which is empty in every case but the one a rule
+/// asks for. Every page costs a lease like any other request, the chain stops
+/// at the first page that does not answer, and a page that points back at one
+/// already read ends it: a pagination loop must not be eight requests.
+fn follow_pages(http: &dyn Http, first_html: &str, first_url: &Url, limits: Limits) -> String {
+    let host = first_url.host_str().unwrap_or("");
+    let Some(next_page) = rules::for_host(host).and_then(|rule| rule.next_page.as_ref()) else {
+        return String::new();
+    };
+    if !first_url.path().starts_with(next_page.path_prefix) {
+        return String::new();
+    }
+
+    let mut extra = String::new();
+    let mut seen = vec![first_url.clone()];
+    let mut page_html = first_html.to_string();
+    let mut page_url = first_url.clone();
+
+    while seen.len() < next_page.max_pages {
+        let Some(next) = rules::next_page(&page_html, &page_url, next_page.path_prefix) else {
+            break;
+        };
+        if seen.contains(&next) {
+            break;
+        }
+        let Ok(response) = http.get(&next, &RequestOptions::page(limits.max_article_bytes)) else {
+            break;
+        };
+        if !response.is_ok() {
+            break;
+        }
+        let html = response.text();
+        let landed = Url::parse(&response.final_url).unwrap_or_else(|_| next.clone());
+        if let Ok(more) = readability::extract(&html, Some(landed.as_str())) {
+            extra.push_str(&more.content_html);
+        }
+        seen.push(next);
+        page_html = html;
+        page_url = landed;
+    }
+    extra
+}
+
+/// A site's byline sentence reduced to the author's name, where a rule knows
+/// how.
+fn tidy_byline(byline: Option<String>, host: &str) -> Option<String> {
+    let byline = byline?;
+    Some(rules::byline(&byline, host).unwrap_or(byline))
 }
 
 /// A URL's host, as an error message should name it, or `the site` when
@@ -510,6 +573,35 @@ mod tests {
         assert!(
             md.contains("A ferry, eventually"),
             "the alt text of the one with no address: {md}"
+        );
+    }
+
+    /// The page follower, end to end: a review split across two pages comes
+    /// out as one article, with the badge and the byline sentence cleaned up
+    /// by the same site's rule.
+    #[test]
+    fn a_review_split_across_pages_comes_back_as_one_article() {
+        let http = Replay::open(&replay_dir()).unwrap();
+        let got = run(
+            &http,
+            "https://www.phoronix.com/review/a-long-test/1",
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(got.status, ArticleStatus::Extracted, "{:?}", got.error);
+        let md = got.markdown.unwrap();
+        assert!(md.contains("sets out what was tested"), "page one: {md}");
+        assert!(
+            md.contains("throughput went up by a fifth"),
+            "page two: {md}"
+        );
+        assert!(
+            !md.contains("HARDWARE"),
+            "the category badge came with it: {md}"
+        );
+        assert!(
+            !md.contains("sponsor.example"),
+            "a link out of the site was followed or kept: {md}"
         );
     }
 
