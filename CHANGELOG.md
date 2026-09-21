@@ -7,6 +7,39 @@ and this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **The window's foundations.** The column is a stack of levels -- the
+  sources, the entries of whichever source is chosen, the article -- and a
+  level carries the core's own `Selection` rather than a second spelling of
+  it. Backing out discards the level; jumping away keeps it, cursor, filter
+  and scroll position and all, to jump back into. The reader is a module
+  rather than a level per article, which is what lets `n` step to the next
+  one without losing where you were in the last.
+- **The layout arithmetic.** Sixty by twenty-one, which is the sum of the
+  constants rather than a judgement. Three rules share the spare rows: the
+  reader focused takes them, a list focused with nothing open takes them, and
+  a list focused with an article open is capped at `[ui] list_rows` so the
+  article behind it stays visible. The cap exists for its consequence --
+  the reader's height does not change as focus moves between the two lists,
+  so clicking a fold does not move the panel under the pointer.
+- **One key table.** Every action, its keys and its help text in one place,
+  which drives both the dispatch and `docs/keys-and-mouse.md`; a test fails
+  if the document and the table ever disagree. Two chords: `gg` for the top
+  of a list, and `o<n>` for a numbered link in an article, which closes as
+  soon as the number it holds cannot grow.
+- **The reader's pipeline.** An article's markdown is parsed into blocks and
+  styled runs, laid out at whatever width the panel is, and the result kept
+  for the last eight -- keyed by the entry, when its text was last written,
+  the width and the theme, so an extraction landing behind an open article
+  redraws it with nothing having to notice. Links are numbered in document
+  order, so the number beside one does not change under a resize. Code
+  blocks are never reflowed; a table too wide for the panel becomes one
+  `header: cell` line per cell rather than four unreadable columns.
+- **The `[wire]` theme roles.** Ten colours a reader needs and a file manager
+  does not -- a link, a heading, an inline-code background, a quote, an
+  unread marker, a star, a video arrow, a byline, a rule and an image
+  placeholder -- derived from whatever palette the theme already had, with a
+  stated colour winning outright. All sixteen built-ins are asserted legible
+  against WCAG AA.
 - **The extractor.** The page behind an entry is fetched and reduced to
   CommonMark: Mozilla's readability algorithm finds the article, a converter
   turns it into markdown, and a normalising pass collapses the blank lines,
