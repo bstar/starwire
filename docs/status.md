@@ -17,17 +17,14 @@ against the real thing this says so.
 | **Importing** | newsboat's urls file and cache (titles and read marks, read-only, never the bodies), OPML in and out, Google Takeout, `yt-dlp` subscriptions. |
 | **YouTube** | Six spellings of a channel reduce to one feed row. Handles and video pages resolve by reading the page, falling back to `yt-dlp`. |
 | **The command line** | `fetch`, `list`, `show`, `add`, `remove`, `import`, `export`, `youtube`, `extract`, and `--replay` to run the whole thing with no network. |
+| **The running core** | One thread owns the database; a pool fetches and extracts on an urgent lane and a background one. One pure `apply` is the only writer, a cancel drops what is queued before it opens a connection, and another process's writes are noticed through `PRAGMA data_version`. `Handle` is the contract the window will use: send a command, drain events, read the state. |
 
 ## Not started
 
 **The window.** The column of docked modules, the stack, the reader, the
 overlays, the keymap and the `[wire]` theme roles are designed and none of it
-is built. `starwire` with no arguments says so and exits cleanly.
-
-The running core the window will talk to — the two thread pools, the single
-`apply`, and the `Handle` that is the contract between them — is also not
-built. Every headless command works without it, which is the point of the
-split.
+is built. `starwire` with no arguments starts the core, says where the window
+is, and exits cleanly.
 
 ## Deliberately outside this milestone
 

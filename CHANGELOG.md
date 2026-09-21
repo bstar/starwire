@@ -41,6 +41,24 @@ and this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html)
 - **The command line.** `fetch`, `list`, `show`, `add`, `remove`, `import`,
   `export`, `youtube` and `extract`, all headless, and `--replay DIR` to serve
   a directory of saved responses instead of the network.
+- **The running core.** One `starwire-db` thread owns the connection and the
+  single-writer rule with it, and a pool of `starwire-net` threads fetches
+  feeds and pulls pages on two lanes — the feed on screen and the article
+  somebody is waiting for go ahead of a refresh of the whole list. One pure
+  `apply` is the only thing that writes to the state, so a worker takes the
+  lock just long enough to fold a result in. A cancel bumps a generation and
+  what is queued is dropped before a connection is opened; a job that does
+  not fit its queue is dropped rather than waited on and picked up by the
+  next tick. Another process writing to the file — `starwire fetch` from a
+  timer — is noticed through `PRAGMA data_version` once a second.
+- **The handle the window will program against.** Send a command, drain
+  events once a frame, read the truth behind a lock. Events carry no state,
+  only the news that something changed, so one may be coalesced or dropped
+  and the next frame still draws what is true; a drop is counted and the next
+  event that fits is preceded by a refresh. A read mark moves the row and the
+  count before the write lands. Dropping the handle joins every thread.
+- **The first-run import offer.** A newsboat `urls` file is offered once, on
+  a list with nothing in it yet, and never again once it has been answered.
 - **A terminal-free core.** Nothing under `src/wire/` may name `ratatui`,
   `crossterm` or the UI module, and a test greps its own sources to make sure
   of it. It is why every command above runs with no TTY attached.
