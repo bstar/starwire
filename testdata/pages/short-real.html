@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<title>nftables now the default backend</title>
+<meta property="og:site_name" content="Example Distribution">
+</head>
+<body>
+<nav><a href="/">Home</a> <a href="/news/">News</a> <a href="/packages/">Packages</a></nav>
+<div id="content">
+<h2 class="title">nftables now the default backend</h2>
+<p class="timestamp">2026-09-14</p>
+<div class="article-content">
+<p>The iptables package now defaults to the nft backend, which is the same
+change every other distribution made over the last two years. The command
+names are unchanged and the rules you already have keep working; what has
+moved is what runs underneath them.</p>
+<p>If you have rules written against the legacy backend, install
+iptables-nft-compat before the next reboot, or the firewall will come up
+empty. Everybody else needs to do nothing at all.</p>
+</div>
+</div>
+<footer>Copyright somebody. <a href="/donate">Donate</a></footer>
+</body>
+</html>

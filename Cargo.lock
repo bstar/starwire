@@ -2947,6 +2947,7 @@ dependencies = [
  "clap",
  "crossbeam-channel",
  "csv",
+ "dom_query",
  "dom_smoothie",
  "feed-rs",
  "htmd",

@@ -72,6 +72,15 @@ dom_smoothie = "0.18"
 # about the second `html5ever` this costs.
 htmd = "0.5"
 
+# Querying the HTML of a page with CSS selectors, in the two places this has
+# to reach into a document rather than convert it: the pre-pass in
+# `extract/images.rs` that turns a lazy-loading `<img>` into one with a real
+# `src`, and the JSON-LD an article carries when readability finds nothing.
+# Not a new tokenizer in the tree -- it is already there under `dom_smoothie`,
+# which is built on it, and naming it here pins the same version rather than
+# adding a second.
+dom_query = "0.28"
+
 # CommonMark, in the reader. The core stores an article as markdown and
 # nothing else; this is what turns that text back into headings, lists,
 # quotes, code blocks, tables and numbered links at whatever width the panel
