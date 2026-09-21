@@ -1,0 +1,17 @@
+name: Feature request
+description: Something you would like it to do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: What are you trying to do
+      description: >
+        The problem behind the request, which often has an answer that is not
+        the feature.

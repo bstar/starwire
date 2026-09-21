@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=starwire
+GenericName=News reader
+Comment=Read the whole thing
+Exec=starwire
+Icon=starwire
+Terminal=true
+Categories=Network;News;Feed;Utility;
+Keywords=rss;atom;feeds;news;youtube;tui;terminal;

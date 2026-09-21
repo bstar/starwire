@@ -1,0 +1,47 @@
+name: Bug report
+description: Something does not work
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it
+      options: [Nix, .deb, Arch, AppImage, portable tarball, from source]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`starwire --version`"
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal and $TERM
+      description: >
+        Needed for anything visual: the preview picture, colours, the mouse,
+        the layout at a given size. Say whether you are inside tmux or screen.
+  - type: textarea
+    id: list
+    attributes:
+      label: For anything to do with reading a directory
+      description: >
+        `starwire list DIR` prints a listing with no window involved, which
+        separates a directory-reading problem from a drawing one. Paste that
+        output.
+      render: shell
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log
+      description: "`starwire -v`, then ~/.local/starwire/cache/starwire.log"
+      render: shell

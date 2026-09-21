@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- STAR/WIRE. A star over a wire between two nodes, matching STAR/FOLD's star over a folded sheet. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect width="256" height="256" rx="48" fill="#121216"/>
+  <path fill="#f0b232"
+        d="M128 26 L145.6 71.7 L194.6 74.4 L156.5 105.3 L169.1 152.6
+           L128 126 L86.9 152.6 L99.5 105.3 L61.4 74.4 L110.4 71.7 Z"/>
+  <g>
+    <!-- The wire, sagging between the two nodes the way a real one does. -->
+    <path fill="none" stroke="#b8801c" stroke-width="12" stroke-linecap="round"
+          d="M72 186 Q128 224 184 186"/>
+    <!-- The nodes at each end, lit in the accent so the wire reads as carrying something. -->
+    <circle cx="72" cy="186" r="22" fill="#b8801c"/>
+    <circle cx="184" cy="186" r="22" fill="#b8801c"/>
+    <circle cx="72" cy="186" r="9" fill="#fae3b0"/>
+    <circle cx="184" cy="186" r="9" fill="#fae3b0"/>
+  </g>
+</svg>

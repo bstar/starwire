@@ -1,0 +1,185 @@
+[package]
+name = "starwire"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.90"
+description = "A stack-based terminal news reader in the STAR family"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/bstar/starwire"
+keywords = ["rss", "atom", "feed-reader", "tui", "terminal"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+# The shared terminal foundation: paths, logging, atomic and private file
+# writes, theming, terminal setup with a panic hook, text entry, wrapping, the
+# key table and its help view, the image pipeline, and the HTTP agent's
+# defaults, all of it already proven in STAR/AMP, STAR/CORD and STAR/FOLD.
+# `net` is on here where STAR/FOLD leaves it off -- a news reader is the first
+# member of the family whose whole job is fetching -- and `gif` and `wsz` stay
+# out: `gif` is what a chat client animates and `wsz` is a Winamp skin format.
+#
+# It is also the one copy of `ratatui`, `crossterm`, `ratatui-image` and
+# `image` in the tree. Everything under `src/ui/` reaches them through
+# `starkit::`, and none of the four is a direct dependency here: a widget built
+# against a second copy of ratatui does not satisfy a signature expecting the
+# first, and the compiler reports that as two versions carrying the same
+# number.
+#
+# A sibling checkout is used through an uncommitted `.cargo/config.toml`, as
+# AGENTS.md describes.
+#
+# The `version` is not redundant with the revision: cargo-deny counts a
+# dependency with no version requirement as a wildcard and `wildcards = "deny"`
+# refuses it, whether or not the source is a git URL pinned to a revision.
+starkit = { git = "https://github.com/bstar/starkit", rev = "857e3f1a5b8c8883c59762bc2c381991c624892c", version = "0.3", default-features = false, features = [
+    "image",
+    "net",
+] }
+
+# HTTP requests, on the agent STAR/KIT hands back. Named here as well so this
+# crate can spell `ureq::Agent` and read a `Response` -- the same version
+# STAR/KIT depends on, so there is one copy and one connection pool.
+# `charset` rather than assuming UTF-8: a news site still serving
+# windows-1252 is not hypothetical, and without it the extractor gets replacement
+# characters where the punctuation was. gzip is on by default, which matters
+# more here than anywhere else in the family: a feed is the same bytes every
+# fifteen minutes.
+ureq = { version = "3", features = ["charset"] }
+
+# RSS 2.0, Atom and JSON Feed behind one parser, plus the MediaRSS
+# `media:group` that carries a YouTube entry's thumbnail and description.
+# Chosen over `rss` + `atom_syndication` + a JSON Feed crate because a feed
+# list of any size has all three formats in it and the differences between them
+# are not the reader's problem. It brings `chrono`, which this tree converts to
+# `jiff` in `wire/feed.rs` and nowhere else.
+feed-rs = "2.4"
+
+# Pulling the article out of the page: a port of Mozilla's Readability, which
+# is the algorithm Firefox's reader view and Instapaper-style services use, so
+# the pages it works on are the pages people already expect to work. Its
+# `is_probably_readable` is the gate that decides whether extraction is worth
+# attempting at all, which a hand-written heuristic here would get wrong on
+# exactly the pages that matter.
+dom_smoothie = "0.18"
+
+# HTML to Markdown, turndown-style, with tables, code blocks, lists and
+# images. Not `html2md`: that is GPL-3.0-or-later, which this MIT tree cannot
+# ship, and it drags `jni` in behind it. Kept behind the single seam
+# `extract/markdown.rs::to_markdown` so that replacing it with a serializer
+# over `dom_query`'s own tree -- already in the graph under `dom_smoothie` --
+# is one file's worth of work. See B9 in the plan and the note in `deny.toml`
+# about the second `html5ever` this costs.
+htmd = "0.5"
+
+# Canonicalising what a feed says a link is: `join` for a relative href,
+# query-pair editing for the tracking parameters `clean_url` strips, and the
+# host comparison politeness and the YouTube normalisation are both built on.
+# String surgery on URLs is how a reader ends up fetching the wrong origin.
+url = "2"
+
+# The one file everything is kept in. `bundled` rather than the system
+# library, for STAR/AMP's reason: one known version, FTS5 guaranteed to be
+# compiled in, and no distribution's SQLite old enough to lack
+# `external content` tables. FTS5 is what `db/articles.rs::search` is.
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+# OPML import and export, which is how a feed list moves between readers.
+# A parser rather than string formatting, because an exported list has to
+# survive being read back by something that is not this program.
+opml = "1.1"
+
+# Google Takeout's `subscriptions.csv`, whose channel titles are quoted and
+# contain commas. A hand-rolled split on `,` loses exactly those rows.
+csv = "1"
+
+# Timestamps. `jiff` rather than `chrono` or `time`, as everywhere else in the
+# family: an entry's date is shown in the reader's local zone, and it is the
+# one crate that carries a tzdb and gets local time right without a separate
+# database crate. `chrono` arrives under `feed-rs` regardless and is converted
+# at that edge rather than spread through the tree.
+jiff = { version = "0.2", features = ["serde"] }
+
+# The `/` filter's ranking. The same matcher Helix and nucleo's own picker
+# use, as a library rather than a picker: this supplies the ordering over the
+# rows already loaded, and full-text search over article bodies is FTS5's job
+# in `db/articles.rs`, not this crate's.
+nucleo-matcher = "0.3"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Errors. `anyhow` where a failure is only ever reported, `thiserror` where
+# the caller has to tell one failure from another -- a fetch, above all, where
+# "not modified" is a success, "429, come back in 60 seconds" sets a backoff,
+# and "the body was not a feed" is a permanent failure for that URL.
+anyhow = "1"
+thiserror = "2"
+
+# Logging -- file only, through STAR/KIT's writer. stdout belongs to the
+# alternate screen, and to the headless subcommands.
+tracing = "0.1"
+
+# Config and the session file on disk.
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+
+# The channels between the window, the db thread and the net pool. The UI loop
+# is synchronous and drains events once per frame; there is no async runtime in
+# this program, because a handful of blocking fetches on their own threads is
+# smaller than a runtime and is what the rest of the family already does.
+crossbeam-channel = "0.5"
+
+[dev-dependencies]
+# Everything here parses foreign input -- a feed, a page, a newsboat `urls`
+# file, an OPML export, a Takeout CSV -- and a hand-written test only covers
+# the malformed input its author thought of.
+proptest = "1"
+# The database, the config and the import fixtures are exercised against real
+# files in a temporary directory.
+tempfile = "3"
+# The UI's snapshots, which arrive with the UI. Named now because the frames
+# are the only form in which a layout regression can actually be seen, and
+# `insta` keeps the accepted frame beside the test.
+insta = "1"
+
+[profile.release]
+# Arithmetic on byte counts, entry counts and offsets read out of feeds and
+# pages somebody else published. Wrapping silently in release turns a hostile
+# number into a plausible wrong one, and the debug-built test suite would never
+# see it.
+overflow-checks = true
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# Parsing a feed and reducing a page to markdown must not be slow in a debug
+# build, or nothing can be tried without a release compile. SQLite compiled at
+# -O0 is the other half of this.
+[profile.dev.package."*"]
+opt-level = 2
+
+[package.metadata.deb]
+maintainer = "bstar <bob@dinicolas.com>"
+copyright = "2026, bstar"
+license-file = ["LICENSE", "0"]
+extended-description = """\
+A terminal news reader in the STAR family: feeds and folders stack up as a
+column that folds behind you, and the article you open is the whole page,
+pulled out of it and wrapped as clean markdown in the terminal rather than
+handed to a browser. YouTube channels are feeds too."""
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/starwire", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/starwire/README.md", "644"],
+    ["packaging/starwire.desktop", "usr/share/applications/starwire.desktop", "644"],
+    ["packaging/starwire.png", "usr/share/icons/hicolor/256x256/apps/starwire.png", "644"],
+    ["packaging/starwire.svg", "usr/share/icons/hicolor/scalable/apps/starwire.svg", "644"],
+]
+# $auto resolves the real sonames from the built binary, which here is the C
+# runtime and libgcc and nothing else -- so the package has to be built on a
+# Debian-like host. Building it on NixOS produces a package with no dependency
+# information at all.
+depends = "$auto"
