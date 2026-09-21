@@ -34,7 +34,7 @@ fn main() -> Result<()> {
     let http = build_http(&core, cli.replay.as_deref())?;
 
     match cli.command {
-        None => run_tui(&cfg, &config_path),
+        None => run_tui(cfg, &config_path, std::sync::Arc::from(http)),
         Some(cli::Command::Fetch { feed, no_extract }) => run_fetch(
             &core,
             http.as_ref(),
@@ -923,19 +923,21 @@ fn run_extract(core: &wire::WireConfig, http: &dyn Http, url: &str) -> Result<()
 /// leaves a commented file to edit; the database is opened here rather than
 /// inside the UI so that a locked or unreadable one is a clear error on the
 /// terminal rather than a panic behind the alternate screen.
-fn run_tui(cfg: &config::Config, config_path: &Path) -> Result<()> {
+fn run_tui(cfg: config::Config, config_path: &Path, http: std::sync::Arc<dyn Http>) -> Result<()> {
     match config::Config::write_template(config_path) {
         Ok(true) => tracing::info!("wrote a starting config.toml to {}", config_path.display()),
         Ok(false) => {}
         Err(e) => tracing::warn!("could not write a starting config.toml: {e}"),
     }
 
-    let db_path = paths::db_file()?;
-    let db = Db::open(&db_path)?;
-    let feed_count = feeds::list_feeds_with_unread(&db)?.len();
-    drop(db);
+    // Probed before the core is started, because the answer is a path an
+    // overlay puts on screen; `spawn` decides whether the offer still stands
+    // by looking at the database it is about to open.
+    let offer = wire::Handle::probe_newsboat();
+    let core = wire::Handle::spawn_with(cfg.core(), paths::db_file()?, offer, http)?;
+    let session_path = PATHS.session_file().ok();
 
-    ui::run(cfg, &db_path, feed_count)
+    ui::run(core, cfg, config_path.to_path_buf(), session_path)
 }
 
 fn home_dir() -> PathBuf {
