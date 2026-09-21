@@ -193,15 +193,42 @@ impl App {
     }
 
     pub(super) fn status_view(&self, now: Instant) -> status::View<'_> {
-        let hints: &[(&str, &str)] = match self.layout.focus() {
-            ModuleId::Sources => &[
+        status::View {
+            theme: &self.theme,
+            note: self.note.as_ref(),
+            now,
+            progress: self.progress_line.as_deref(),
+            hints: self.hints(),
+            right: &self.right_line,
+            graphics: self.graphics.name(),
+        }
+    }
+
+    /// The key hints for whichever module has the keyboard -- and, while
+    /// the `/` field is open, how to leave it instead.
+    ///
+    /// The way out goes first, because `status::render_hints` gives up the
+    /// tail of the line when the field is narrow: at the sixty-column floor
+    /// only the first pair or two are drawn, and the one worth keeping is
+    /// the one that says how to stop typing.
+    pub(super) fn hints(&self) -> Vec<(&'static str, &'static str)> {
+        if self.filter.is_some() {
+            return vec![
+                ("enter", "keep"),
+                ("esc", "clear"),
+                ("alt+\u{2026}", "still work"),
+            ];
+        }
+        let focus = self.layout.focus();
+        let mut hints: Vec<(&'static str, &'static str)> = match focus {
+            ModuleId::Sources => vec![
                 ("enter", "open"),
                 ("l", "into"),
                 ("a", "add"),
                 ("R", "refresh"),
                 ("/", "filter"),
             ],
-            ModuleId::Entries => &[
+            ModuleId::Entries => vec![
                 ("enter", "read"),
                 ("m", "read"),
                 ("s", "star"),
@@ -209,7 +236,7 @@ impl App {
                 ("v", "play"),
                 ("n", "next unread"),
             ],
-            ModuleId::Reader => &[
+            ModuleId::Reader => vec![
                 ("space", "page"),
                 ("n", "next"),
                 ("m", "read"),
@@ -218,15 +245,13 @@ impl App {
                 ("y", "copy"),
             ],
         };
-        status::View {
-            theme: &self.theme,
-            note: self.note.as_ref(),
-            now,
-            progress: self.progress_line.as_deref(),
-            hints,
-            right: &self.right_line,
-            graphics: self.graphics.name(),
+        // A filter `enter` kept is invisible in the keys -- the list simply
+        // has fewer rows in it -- so the way out of it leads the line for
+        // as long as it is on.
+        if !self.filter_text(focus).is_empty() {
+            hints.insert(0, ("esc", "clear filter"));
         }
+        hints
     }
 
     /// `⠋ refreshing  12 of 41`, while one is.

@@ -43,8 +43,10 @@ pub struct View<'a> {
     /// `"⠋ refreshing  12 of 41"`, while one is running.
     pub progress: Option<&'a str>,
     /// `(key, description)` pairs -- `("n", "next unread")` -- drawn the
-    /// same way the `?` cell to their left is.
-    pub hints: &'a [(&'a str, &'a str)],
+    /// same way the `?` cell to their left is. Owned rather than borrowed
+    /// because the set is built per frame: which module has the keyboard
+    /// decides most of it, and the `/` filter replaces or leads it.
+    pub hints: Vec<(&'a str, &'a str)>,
     /// `"Hacker News · 1/40 · 3%"`: the source, the cursor, how much of it
     /// has been read.
     pub right: &'a str,
@@ -83,7 +85,7 @@ impl View<'_> {
         if let Some(p) = self.progress {
             return (p.to_string(), MiddleKind::Progress);
         }
-        (hints_text(self.hints), MiddleKind::Hints)
+        (hints_text(&self.hints), MiddleKind::Hints)
     }
 
     /// The stable right-hand field, held to `max_w`: the graphics word goes
@@ -273,7 +275,7 @@ pub fn render(area: Rect, buf: &mut Buffer, v: &View<'_>) {
                     .bg(rgb(t.hint_key_bg))
                     .add_modifier(Modifier::BOLD);
                 let desc_style = base.fg(rgb(t.hint_desc_fg));
-                render_hints(buf, f.middle, v.hints, key_style, desc_style);
+                render_hints(buf, f.middle, &v.hints, key_style, desc_style);
             }
             MiddleKind::Note(level) => {
                 let style = match level {
@@ -374,7 +376,7 @@ mod tests {
             note,
             now,
             progress: Some("\u{280b} refreshing  12 of 41"),
-            hints: &[("n", "next unread"), ("m", "read"), ("s", "star")],
+            hints: vec![("n", "next unread"), ("m", "read"), ("s", "star")],
             right: "Hacker News \u{b7} 1/40 \u{b7} 3%",
             graphics: "kitty",
         }
@@ -394,7 +396,7 @@ mod tests {
 
         let mut idle = view(&t, None, at);
         idle.progress = None;
-        assert_eq!(idle.middle().0, hints_text(idle.hints));
+        assert_eq!(idle.middle().0, hints_text(&idle.hints));
     }
 
     #[test]
@@ -434,7 +436,7 @@ mod tests {
                 .collect();
             assert_eq!(
                 drawn,
-                fit(&hints_text(v.hints), f.middle.width),
+                fit(&hints_text(&v.hints), f.middle.width),
                 "width {width}"
             );
         }

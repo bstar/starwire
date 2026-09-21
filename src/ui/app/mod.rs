@@ -1997,6 +1997,48 @@ mod tests {
         assert_eq!(app.view.source_rows.len(), all);
     }
 
+    /// The way out is on the status row in both states: while the field is
+    /// open, and while a filter `enter` kept is still narrowing the list.
+    #[test]
+    fn the_filter_says_how_to_leave() {
+        let (mut app, mut fk, _dir) = app();
+        into_feed(&mut app, &mut fk, "Tech", "Hacker News");
+        assert!(!app.hints().contains(&("esc", "clear filter")));
+
+        app.key(key('/'));
+        for c in "paywall".chars() {
+            app.key(key(c));
+        }
+        settle(&mut app, &mut fk);
+        let open = app.hints();
+        assert_eq!(open[0], ("enter", "keep"), "{open:?}");
+        assert_eq!(open[1], ("esc", "clear"), "{open:?}");
+
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        let kept = app.hints();
+        assert_eq!(
+            kept[0],
+            ("esc", "clear filter"),
+            "the way out leads the line so narrowing does not drop it: {kept:?}"
+        );
+
+        // And the same on the feed list, which has a filter of its own.
+        app.key(alt('1'));
+        app.key(key('/'));
+        app.key(key('t'));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.hints()[0], ("enter", "keep"));
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.hints()[0], ("esc", "clear filter"));
+
+        app.key(code(KeyCode::Esc));
+        settle(&mut app, &mut fk);
+        assert!(!app.hints().contains(&("esc", "clear filter")));
+        assert_eq!(app.filter_text(ModuleId::Sources), "");
+    }
+
     /// The `o` chord: a digit that cannot grow opens at once, `oo` is the
     /// article itself, and `esc` gives up.
     #[test]
