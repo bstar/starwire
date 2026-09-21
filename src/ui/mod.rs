@@ -26,6 +26,7 @@ pub mod keymap;
 pub mod layout;
 pub mod panels;
 pub mod stack;
+pub mod theme;
 
 /// Say what is and is not here, and exit 0.
 ///
