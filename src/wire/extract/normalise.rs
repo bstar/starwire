@@ -140,7 +140,11 @@ pub fn normalise(markdown: &str, base: Option<&Url>, options: Options) -> String
     if !options.images {
         out = drop_images(&out);
     }
-    truncate_at_paragraph(&out, options.max_bytes)
+    let mut out = truncate_at_paragraph(&out, options.max_bytes);
+    // The cut can land just after a hard break, which then breaks nothing and
+    // would otherwise be a lone backslash at the end of the article.
+    undangle(&mut out);
+    out
 }
 
 /// Collapse trailing whitespace and runs of blank lines.
@@ -148,8 +152,16 @@ pub fn normalise(markdown: &str, base: Option<&Url>, options: Options) -> String
 /// `htmd` leaves three or four blank lines wherever the page had nested
 /// `<div>`s around a paragraph, which in a terminal at eighty columns is
 /// half a screen of nothing.
+///
+/// Trailing whitespace has to go -- a page indented with spaces is otherwise
+/// half a screen of them -- and that is exactly why the converter is
+/// configured to spell a hard break as a trailing backslash rather than as
+/// two trailing spaces: this function would eat the spaces, and did, in every
+/// article in the reference database. A backslash at the end of a *paragraph*
+/// breaks nothing and is taken off, because a stray backslash on screen looks
+/// like a bug in the extractor.
 fn collapse(markdown: &str) -> String {
-    let mut out = String::with_capacity(markdown.len());
+    let mut lines: Vec<String> = Vec::new();
     let mut blank_run = 0usize;
     let mut in_code = false;
     for line in markdown.lines() {
@@ -164,13 +176,35 @@ fn collapse(markdown: &str) -> String {
             if blank_run > 1 {
                 continue;
             }
+            if let Some(last) = lines.last_mut() {
+                undangle(last);
+            }
         } else {
             blank_run = 0;
         }
-        out.push_str(trimmed);
-        out.push('\n');
+        lines.push(trimmed.to_string());
     }
+    if !in_code {
+        if let Some(last) = lines.last_mut() {
+            undangle(last);
+        }
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
     out.trim_start_matches('\n').trim_end().to_string()
+}
+
+/// Take a hard break off the end of a paragraph, where it breaks nothing.
+///
+/// One backslash only: two is an escaped backslash, which is a character the
+/// author wrote.
+fn undangle(line: &mut String) {
+    if line.ends_with('\\') && !line.ends_with("\\\\") {
+        line.pop();
+        while line.ends_with(' ') || line.ends_with('\t') {
+            line.pop();
+        }
+    }
 }
 
 /// Make every link and image target absolute against the page.
@@ -360,6 +394,23 @@ mod tests {
     fn runs_of_blank_lines_become_one() {
         let got = collapse("A\n\n\n\n\nB\n\n\n");
         assert_eq!(got, "A\n\nB");
+    }
+
+    #[test]
+    fn a_hard_break_survives_and_a_dangling_one_does_not() {
+        // The converter spells a break as a trailing backslash precisely so
+        // that trimming trailing whitespace cannot eat it.
+        let got = collapse("First\\\nsecond\n\nA paragraph.\\\n\n\nAnd another.\\");
+        assert!(got.contains("First\\\nsecond"), "{got:?}");
+        assert!(
+            !got.contains("A paragraph.\\"),
+            "a break at the end of a paragraph breaks nothing: {got:?}"
+        );
+        assert!(!got.ends_with('\\'), "{got:?}");
+
+        // Two backslashes are an escaped backslash, which the author wrote.
+        let got = collapse("Ends in a backslash: \\\\\n\nAfter.");
+        assert!(got.contains("backslash: \\\\"), "{got:?}");
     }
 
     #[test]
