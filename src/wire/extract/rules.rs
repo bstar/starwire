@@ -30,7 +30,14 @@ const STUB_PHRASES: &[&str] = &[
     "keep reading with a 7-day free trial",
     "sign in to read",
     "continue reading with",
-    "to continue reading",
+    // Spelled out rather than the bare "to continue reading", which turns up
+    // in the last paragraph of real articles offering their own back
+    // catalogue. A false positive here costs a whole extracted article.
+    "sign up to continue reading",
+    "sign in to continue reading",
+    "log in to continue reading",
+    "register to continue reading",
+    "subscribe to continue reading",
     "this article is for subscribers",
     "become a paid subscriber",
     "already have an account? sign in",
