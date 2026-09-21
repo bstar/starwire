@@ -24,6 +24,7 @@ use anyhow::Result;
 
 pub mod keymap;
 pub mod panels;
+pub mod stack;
 
 /// Say what is and is not here, and exit 0.
 ///
