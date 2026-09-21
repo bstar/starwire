@@ -27,7 +27,7 @@ pub mod clipboard;
 pub mod keymap;
 pub mod layout;
 pub mod markdown;
-// pub mod overlays;
+pub mod overlays;
 pub mod panels;
 pub mod stack;
 pub mod status;
