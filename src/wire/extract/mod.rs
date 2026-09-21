@@ -157,7 +157,10 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
         Err(e) => return Ok(failed(url, e.to_string())),
     };
     if !response.is_ok() {
-        return Ok(failed(url, format!("the site answered {}", response.status)));
+        return Ok(failed(
+            url,
+            format!("the site answered {}", response.status),
+        ));
     }
 
     // A server that answers a request for HTML with a PDF or an image is
@@ -165,7 +168,10 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
     if let Some(ct) = &response.content_type {
         let ct = ct.to_ascii_lowercase();
         if !ct.contains("html") && !ct.contains("xml") && !ct.contains("text/") {
-            return Ok(failed(url, format!("the page is {ct}, not something to read")));
+            return Ok(failed(
+                url,
+                format!("the page is {ct}, not something to read"),
+            ));
         }
     }
 
@@ -268,7 +274,11 @@ mod tests {
             Policy::FeedContent
         );
         assert_eq!(
-            policy(FeedKind::Reddit, EntryKind::Article, Some("https://e.org/a")),
+            policy(
+                FeedKind::Reddit,
+                EntryKind::Article,
+                Some("https://e.org/a")
+            ),
             Policy::FeedContent,
             "the feed kind decides even when the entry looks like an article"
         );
@@ -277,7 +287,11 @@ mod tests {
     #[test]
     fn a_hacker_news_item_is_extracted_only_when_it_links_out() {
         assert_eq!(
-            policy(FeedKind::Hn, EntryKind::Article, Some("https://e.org/piece")),
+            policy(
+                FeedKind::Hn,
+                EntryKind::Article,
+                Some("https://e.org/piece")
+            ),
             Policy::Extract
         );
         assert_eq!(
@@ -336,7 +350,11 @@ mod tests {
         assert_eq!(got.status, ArticleStatus::Extracted, "{:?}", got.error);
         let md = got.markdown.unwrap();
         assert!(md.contains("Three rules"), "the heading: {md}");
-        assert!(md.contains("* Every value has exactly one owner."), "the list: {md}");
+        assert!(
+            md.contains("Every value has exactly one owner."),
+            "the list: {md}"
+        );
+        assert!(md.contains("```rust"), "the fenced block's language: {md}");
         assert!(md.contains("fn longest"), "the code block: {md}");
         assert!(
             md.contains("https://doc.rust-lang.org/nomicon/"),

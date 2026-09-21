@@ -26,12 +26,10 @@ use anyhow::Result;
 /// [`super::normalise::normalise`]'s job, because it has to happen to the
 /// feed's own text as well and that never goes through a converter.
 pub fn to_markdown(html: &str, base: Option<&url::Url>) -> Result<String> {
-    converter()
-        .convert(html)
-        .map_err(|e| match base {
-            Some(url) => anyhow::anyhow!("converting {url} to markdown: {e}"),
-            None => anyhow::anyhow!("converting to markdown: {e}"),
-        })
+    converter().convert(html).map_err(|e| match base {
+        Some(url) => anyhow::anyhow!("converting {url} to markdown: {e}"),
+        None => anyhow::anyhow!("converting to markdown: {e}"),
+    })
 }
 
 /// The converter, configured once.
@@ -60,8 +58,7 @@ mod tests {
 
     #[test]
     fn the_shapes_the_reader_draws_all_come_out_of_it() {
-        let got = md(
-            r#"<h1>A heading</h1>
+        let got = md(r#"<h1>A heading</h1>
 <p>A paragraph with <strong>bold</strong>, <em>italic</em> and
 <code>inline code</code>, and a <a href="https://example.org/x">link</a>.</p>
 <ul><li>One</li><li>Two</li></ul>
@@ -69,17 +66,19 @@ mod tests {
 <pre><code class="language-rust">fn main() {}</code></pre>
 <blockquote><p>Quoted.</p></blockquote>
 <hr>
-<img src="https://example.org/a.png" alt="A picture">"#,
-        );
+<img src="https://example.org/a.png" alt="A picture">"#);
         assert!(got.contains("# A heading"), "{got}");
         assert!(got.contains("**bold**"), "{got}");
         assert!(got.contains("`inline code`"), "{got}");
         assert!(got.contains("[link](https://example.org/x)"), "{got}");
-        assert!(got.contains("One"), "{got}");
-        assert!(got.contains("1. First"), "{got}");
+        assert!(got.contains("*   One"), "{got}");
+        assert!(got.contains("1.  First"), "{got}");
         assert!(got.contains("fn main() {}"), "{got}");
         assert!(got.contains("> Quoted."), "{got}");
-        assert!(got.contains("![A picture](https://example.org/a.png)"), "{got}");
+        assert!(
+            got.contains("![A picture](https://example.org/a.png)"),
+            "{got}"
+        );
     }
 
     #[test]
@@ -90,24 +89,23 @@ mod tests {
 
     #[test]
     fn a_table_survives_as_a_table() {
-        let got = md(
-            "<table><thead><tr><th>A</th><th>B</th></tr></thead>\
-             <tbody><tr><td>1</td><td>2</td></tr></tbody></table>",
+        let got = md("<table><thead><tr><th>A</th><th>B</th></tr></thead>\
+             <tbody><tr><td>1</td><td>2</td></tr></tbody></table>");
+        assert!(
+            got.contains('|'),
+            "the reader draws tables as columns: {got}"
         );
-        assert!(got.contains('|'), "the reader draws tables as columns: {got}");
         assert!(got.contains('A') && got.contains('2'), "{got}");
     }
 
     #[test]
     fn scripts_styles_and_embeds_are_not_text() {
-        let got = md(
-            "<p>Before</p>\
+        let got = md("<p>Before</p>\
              <script>alert('x')</script>\
              <style>.a{color:red}</style>\
              <iframe src=\"https://e.org/embed\"></iframe>\
              <form><button>Subscribe</button></form>\
-             <p>After</p>",
-        );
+             <p>After</p>");
         assert!(got.contains("Before") && got.contains("After"), "{got}");
         assert!(!got.contains("alert"), "{got}");
         assert!(!got.contains("color:red"), "{got}");

@@ -375,7 +375,10 @@ mod tests {
         let got = normalise(md, Some(&base()), Options::default());
         assert!(got.contains("(https://example.org/two)"), "{got}");
         assert!(got.contains("(https://example.org/three)"), "{got}");
-        assert!(got.contains("(https://example.org/posts/img/a.png)"), "{got}");
+        assert!(
+            got.contains("(https://example.org/posts/img/a.png)"),
+            "{got}"
+        );
     }
 
     #[test]
@@ -400,7 +403,10 @@ mod tests {
     fn a_link_title_after_the_target_is_kept() {
         let md = r#"[a](/x "A title")"#;
         let got = normalise(md, Some(&base()), Options::default());
-        assert!(got.contains(r#"(https://example.org/x "A title")"#), "{got}");
+        assert!(
+            got.contains(r#"(https://example.org/x "A title")"#),
+            "{got}"
+        );
     }
 
     #[test]
@@ -429,9 +435,12 @@ mod tests {
     #[test]
     fn the_cut_lands_on_a_paragraph_boundary() {
         let md = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
+        // The last break that fits, not the first: the cut keeps as much as
+        // it can and still lands between paragraphs.
         let got = truncate_at_paragraph(md, 40);
-        assert_eq!(got, "First paragraph.");
+        assert_eq!(got, "First paragraph.\n\nSecond paragraph.");
         assert!(got.len() <= 40);
+        assert_eq!(truncate_at_paragraph(md, 20), "First paragraph.");
     }
 
     #[test]

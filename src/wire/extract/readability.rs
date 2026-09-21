@@ -104,10 +104,14 @@ fn config() -> dom_smoothie::Config {
         // one way this becomes slow. Readability treats 0 as no limit, which
         // is not what a program fetching arbitrary URLs wants.
         max_elements_to_parse: 30_000,
-        // The classes are stripped: nothing downstream reads them, and
-        // keeping them makes the HTML that goes into the markdown converter
-        // several times larger for no gain.
-        keep_classes: false,
+        // Classes are kept, which is not the obvious choice: they make the
+        // HTML handed to the markdown converter noticeably larger and
+        // nothing downstream reads any of them except one. That one is
+        // `class="language-rust"` on a `<pre><code>`, which is the only
+        // place a fenced block's language exists -- strip it and every code
+        // block in every article comes out as a bare ``` fence, which the
+        // reader then cannot label or colour.
+        keep_classes: true,
         // Raw, because the *HTML* is what is wanted here -- the markdown is
         // made by the converter behind its own seam, and letting two things
         // produce markdown would be two sets of opinions about a list
@@ -164,10 +168,7 @@ mod tests {
             got.content_html
         );
         assert!(got.length >= MIN_LENGTH);
-        assert_eq!(
-            got.title.as_deref(),
-            Some("Why the borrow checker says no")
-        );
+        assert_eq!(got.title.as_deref(), Some("Why the borrow checker says no"));
     }
 
     #[test]
