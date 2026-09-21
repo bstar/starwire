@@ -26,23 +26,37 @@
 //! it with `pulldown-cmark` at the width it is drawing, and nothing under
 //! here has an opinion about how a heading looks.
 //!
-//! `state`, `worker` and `handle` -- the running core, its two thread pools
-//! and the contract the window programs against -- are the next work
-//! package's and are not in this tree yet. Everything here is reachable
-//! without them: the headless subcommands open a [`db::Db`], build an
-//! [`net::Http`], and call the same functions those threads will.
+//! - [`state`] is the truth and the one function allowed to change it;
+//!   [`worker`] is the threads that do everything else; [`handle`] is the
+//!   contract the window programs against. None of the three is needed by a
+//!   headless subcommand: those open a [`db::Db`], build an [`net::Http`],
+//!   and call the same functions the threads call.
 
 pub mod db;
 pub mod extract;
 pub mod feed;
 pub mod fetch;
+pub mod handle;
 pub mod import;
 pub mod net;
 pub mod open;
 pub mod search;
+pub mod state;
 #[cfg(test)]
 pub mod testing;
+pub mod worker;
 pub mod youtube;
+
+// Every name here is part of the contract the window programs against, and
+// the window lands in a later package -- the same reason `dead_code` is
+// allowed in this tree at all. Take the allow away when `src/ui/` uses them.
+#[allow(unused_imports)]
+pub use handle::{
+    Command, Event, Handle, HandleParts, ImportOffer, Note, NoteLevel, OpenKind, RefreshScope,
+    Setting,
+};
+#[allow(unused_imports)]
+pub use state::{EntryPage, RefreshProgress, RuntimeSettings, State};
 
 /// Everything the terminal hands the core once, at startup.
 ///
