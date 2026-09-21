@@ -61,8 +61,16 @@ pub fn load(path: &Path) -> Session {
 impl Session {
     /// Write it, through a temporary file in the same directory, so an
     /// interrupted write cannot leave a truncated session behind.
+    ///
+    /// `to_string` rather than `to_string_pretty`: the positions are a list
+    /// of two-element arrays, and the pretty printer puts every one of those
+    /// arrays on four lines of its own, so five hundred remembered places
+    /// come to two thousand lines. Compact, they are one line each --
+    /// `positions = [[42, 120], [43, 0]]` -- and the file stays something a
+    /// person can look at. Nothing else in here is a table, so there is no
+    /// ordering problem to pay for it with.
     pub fn save(&self, path: &Path) -> Result<()> {
-        let text = toml::to_string_pretty(self).context("serialising the session")?;
+        let text = toml::to_string(self).context("serialising the session")?;
         starkit::fs::write_atomic(path, text.as_bytes())
             .with_context(|| format!("writing {}", path.display()))
     }
@@ -157,6 +165,61 @@ mod tests {
         };
         session.save(&path).unwrap();
         assert_eq!(load(&path), session);
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("positions = [[42, 120], [43, 0]]"),
+            "a position is one pair on one line, not a four-line array:\n{text}"
+        );
+    }
+
+    /// The file written before the positions were made compact is four lines
+    /// per pair rather than one. It is the same TOML, so it still reads --
+    /// which is the point: an upgrade must not lose a month of places in
+    /// half-read articles.
+    #[test]
+    fn a_session_written_by_the_earlier_build_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.toml");
+        std::fs::write(
+            &path,
+            "last_source = \"feed:7\"\n\
+             last_entry = 42\n\
+             unread_only = true\n\
+             positions = [\n    [\n    42,\n    120,\n],\n    [\n    43,\n    0,\n],\n]\n",
+        )
+        .unwrap();
+
+        let loaded = load(&path);
+        assert_eq!(loaded.positions, vec![(42, 120), (43, 0)]);
+        assert_eq!(loaded.position(EntryId(42)), Some(120));
+        assert_eq!(loaded.source(), Some(Selection::Feed(FeedId(7))));
+
+        // And writing it back puts it in the compact shape.
+        loaded.save(&path).unwrap();
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("positions = [[42, 120], [43, 0]]"));
+    }
+
+    /// Five hundred places, and the file is still small enough to open in an
+    /// editor without wincing.
+    #[test]
+    fn a_full_set_of_positions_is_one_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.toml");
+        let mut s = Session::default();
+        for i in 0..(MAX_POSITIONS as i64) {
+            s.remember(EntryId(i), i as usize);
+        }
+        s.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            text.lines().count(),
+            1,
+            "the whole file is the positions line"
+        );
+        assert_eq!(load(&path).positions.len(), MAX_POSITIONS);
     }
 
     #[test]
