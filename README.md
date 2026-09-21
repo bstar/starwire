@@ -24,8 +24,8 @@ Read the whole thing.
 
 ```sh
 nix run github:bstar/starwire                          # Linux, or Apple Silicon macOS
-nix profile install github:bstar/starwire
-cargo install --git https://github.com/bstar/starwire   # Rust 1.90 or newer
+nix profile install github:bstar/starwire              # the same, kept installed
+cargo install --git https://github.com/bstar/starwire  # Rust 1.90 or newer
 ```
 
 Or take a built package off the
