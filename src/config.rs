@@ -94,6 +94,9 @@ pub struct Fetch {
     pub min_host_interval_secs: u64,
     pub user_agent_extra: String,
     pub refresh_on_start: bool,
+    /// Last in the struct because it is a table: TOML puts a table after
+    /// every scalar beside it, and a key written below one belongs to it.
+    pub host_intervals: std::collections::BTreeMap<String, u64>,
 }
 
 impl Default for Fetch {
@@ -107,6 +110,7 @@ impl Default for Fetch {
             min_host_interval_secs: core.min_host_interval_secs,
             user_agent_extra: core.user_agent_extra,
             refresh_on_start: core.refresh_on_start,
+            host_intervals: core.host_intervals,
         }
     }
 }
@@ -220,6 +224,7 @@ impl Config {
                 min_host_interval_secs: self.fetch.min_host_interval_secs,
                 user_agent_extra: self.fetch.user_agent_extra.clone(),
                 refresh_on_start: self.fetch.refresh_on_start,
+                host_intervals: self.fetch.host_intervals.clone(),
             },
             articles: wire::ArticlesConfig {
                 extract: self.articles.extract,
@@ -289,6 +294,13 @@ min_host_interval_secs = 2
 # you would rather the sites you read had a way to reach you.
 user_agent_extra = ""
 refresh_on_start = true
+# Gaps for particular hosts, in seconds, by host or by a tail of one. These
+# beat both min_host_interval_secs and the gaps STAR/WIRE already knows about
+# -- reddit.com every 61 seconds, archive.is every 10 -- so this is where a
+# site that has asked you to slow down goes.
+#
+# [fetch.host_intervals]
+# "example.org" = 30
 
 [articles]
 # Fetch the linked page and pull the article out of it. false leaves every
@@ -396,6 +408,7 @@ mod tests {
                 min_host_interval_secs: 5,
                 user_agent_extra: "contact@example.org".into(),
                 refresh_on_start: false,
+                host_intervals: [("example.org".to_string(), 30)].into_iter().collect(),
             },
             articles: Articles {
                 extract: false,
@@ -425,6 +438,7 @@ mod tests {
         assert_eq!(core.fetch.min_host_interval_secs, 5);
         assert_eq!(core.fetch.user_agent_extra, "contact@example.org");
         assert!(!core.fetch.refresh_on_start);
+        assert_eq!(core.fetch.host_intervals.get("example.org"), Some(&30));
 
         assert!(!core.articles.extract);
         assert_eq!(core.articles.max_article_bytes, 4096);

@@ -172,7 +172,13 @@ impl Live {
             .into();
         Self {
             agent,
-            politeness: Politeness::new(Duration::from_secs(cfg.fetch.min_host_interval_secs)),
+            politeness: Politeness::new(Duration::from_secs(cfg.fetch.min_host_interval_secs))
+                .with_host_intervals(
+                    cfg.fetch
+                        .host_intervals
+                        .iter()
+                        .map(|(host, secs)| (host.clone(), *secs)),
+                ),
         }
     }
 }
@@ -211,6 +217,18 @@ impl Http for Live {
             let content_type = header("content-type");
             let retry_after = header("retry-after").and_then(|v| v.trim().parse::<i64>().ok());
             let location = header("location");
+
+            // What a server says about its own limiter, where it is one this
+            // believes. Reddit answers the first request of the minute with
+            // nothing left and forty seconds to wait.
+            let host = target.host_str().unwrap_or("").to_string();
+            if self.politeness.honours_ratelimit_reset(&host) {
+                if let Some(wait) =
+                    ratelimit_wait(header("x-ratelimit-remaining"), header("x-ratelimit-reset"))
+                {
+                    self.politeness.hold(&host, wait);
+                }
+            }
 
             if let (true, Some(location)) = (is_redirect(status), location.as_deref()) {
                 let next = target
@@ -261,6 +279,24 @@ impl Http for Live {
 
         Err(NetError::TooManyRedirects(MAX_REDIRECTS))
     }
+}
+
+/// How long a server's own rate-limit headers ask for, where they ask for
+/// anything.
+///
+/// Reddit sends `x-ratelimit-remaining` as a float (`0.0`) and
+/// `x-ratelimit-reset` as whole seconds. Nothing is asked of a header that
+/// does not parse: a limiter this does not understand is one to leave to the
+/// ordinary gap.
+fn ratelimit_wait(remaining: Option<String>, reset: Option<String>) -> Option<Duration> {
+    let remaining: f64 = remaining?.trim().parse().ok()?;
+    if remaining >= 1.0 {
+        return None;
+    }
+    let reset: u64 = reset?.trim().parse().ok()?;
+    // A limiter asking for an hour is a limiter this program has
+    // misunderstood; the ordinary backoff is what that case is for.
+    (reset > 0 && reset <= 300).then(|| Duration::from_secs(reset))
 }
 
 /// The status codes that mean "it is somewhere else".
@@ -385,6 +421,54 @@ impl Http for Replay {
     }
 }
 
+/// A host that has said, by how it behaves, that the default gap is not
+/// enough.
+///
+/// Data rather than code, and short on purpose: a table of special cases is
+/// a table of things measured, and anything speculative in it is a slower
+/// reader for no reason.
+#[derive(Debug, Clone, Copy)]
+pub struct HostRule {
+    /// Matched against the whole host or against a dot-prefixed tail of it,
+    /// so `reddit.com` covers `www.reddit.com` and `old.reddit.com` and does
+    /// not cover `notreddit.com`.
+    pub host_suffix: &'static str,
+    pub min_interval: Duration,
+    /// Whether to read `x-ratelimit-remaining` and `x-ratelimit-reset` off
+    /// the answer and hold the host until the reset when nothing is left.
+    /// Only for servers known to send them honestly.
+    pub honour_ratelimit_reset: bool,
+}
+
+/// The hosts a feed list of any size will meet, and what they want.
+///
+/// **Reddit**, probed live in September 2026: `www.reddit.com/r/<sub>/.rss`
+/// serves Atom to this program's user agent -- a browser's gets a 429 -- and
+/// answers the very first request with `x-ratelimit-remaining: 0.0` and
+/// `x-ratelimit-reset: 40`. That is roughly one request a minute per address,
+/// for all five subreddits together, so sixty-one seconds is the gap and the
+/// reset header is believed on top of it.
+///
+/// **archive.is** is what `feedpress.me` wrappers redirect to, seventeen
+/// times in one afternoon in the reference database, every one of them a 429.
+const HOST_RULES: &[HostRule] = &[
+    HostRule {
+        host_suffix: "reddit.com",
+        min_interval: Duration::from_secs(61),
+        honour_ratelimit_reset: true,
+    },
+    HostRule {
+        host_suffix: "archive.is",
+        min_interval: Duration::from_secs(10),
+        honour_ratelimit_reset: false,
+    },
+];
+
+/// Whether a host is the one a rule or a configured override names.
+fn host_matches(host: &str, suffix: &str) -> bool {
+    host == suffix || host.ends_with(&format!(".{suffix}"))
+}
+
 /// One request to one host at a time, with a gap between them.
 ///
 /// Two separate guarantees, and both matter. **Serial per host** is what
@@ -399,6 +483,10 @@ impl Http for Replay {
 /// the same host waits on the mutex until the first has its answer.
 pub struct Politeness {
     min_interval: Duration,
+    /// What `[fetch] host_intervals` said, matched the same way the built-in
+    /// rules are and winning over them: a reader who has been asked by an
+    /// administrator to slow down should not have to wait for a release.
+    overrides: HashMap<String, Duration>,
     hosts: Mutex<HashMap<String, Arc<HostSlot>>>,
 }
 
@@ -417,36 +505,105 @@ struct HostSlot {
 struct HostState {
     busy: bool,
     last: Instant,
+    /// Set from a server's own rate-limit headers, and never moved backwards.
+    /// Reddit says `x-ratelimit-reset: 40` after one request; waiting the
+    /// forty seconds is the difference between being rate limited and being
+    /// blocked.
+    not_before: Option<Instant>,
 }
 
 impl Politeness {
     pub fn new(min_interval: Duration) -> Self {
         Self {
             min_interval,
+            overrides: HashMap::new(),
             hosts: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The reader's own table of gaps, from `[fetch] host_intervals`.
+    pub fn with_host_intervals<I>(mut self, intervals: I) -> Self
+    where
+        I: IntoIterator<Item = (String, u64)>,
+    {
+        self.overrides = intervals
+            .into_iter()
+            .map(|(host, secs)| (host.trim().to_ascii_lowercase(), Duration::from_secs(secs)))
+            .filter(|(host, _)| !host.is_empty())
+            .collect();
+        self
+    }
+
+    /// The gap this host wants: what the reader configured, else what the
+    /// table above knows, else the default. The longest matching suffix wins,
+    /// so a rule for one subdomain beats a rule for its parent.
+    pub fn interval_for(&self, host: &str) -> Duration {
+        let host = host.to_ascii_lowercase();
+        let configured = self
+            .overrides
+            .iter()
+            .filter(|(suffix, _)| host_matches(&host, suffix))
+            .max_by_key(|(suffix, _)| suffix.len())
+            .map(|(_, interval)| *interval);
+        configured
+            .or_else(|| {
+                HOST_RULES
+                    .iter()
+                    .filter(|rule| host_matches(&host, rule.host_suffix))
+                    .max_by_key(|rule| rule.host_suffix.len())
+                    .map(|rule| rule.min_interval)
+            })
+            .unwrap_or(self.min_interval)
+    }
+
+    /// Whether this host's rate-limit headers are worth believing.
+    pub fn honours_ratelimit_reset(&self, host: &str) -> bool {
+        let host = host.to_ascii_lowercase();
+        HOST_RULES
+            .iter()
+            .filter(|rule| host_matches(&host, rule.host_suffix))
+            .max_by_key(|rule| rule.host_suffix.len())
+            .is_some_and(|rule| rule.honour_ratelimit_reset)
+    }
+
+    /// Do not ask this host anything for `wait`.
+    ///
+    /// Additive with the gap rather than instead of it, and never shortened:
+    /// two threads reading two answers from one rate limiter must not talk
+    /// each other into asking sooner.
+    pub fn hold(&self, host: &str, wait: Duration) {
+        let slot = self.slot(host);
+        let until = Instant::now() + wait;
+        let mut state = slot.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.not_before.is_none_or(|current| until > current) {
+            state.not_before = Some(until);
+        }
+    }
+
+    fn slot(&self, host: &str) -> Arc<HostSlot> {
+        let mut hosts = self.hosts.lock().unwrap_or_else(|e| e.into_inner());
+        Arc::clone(hosts.entry(host.to_ascii_lowercase()).or_insert_with(|| {
+            Arc::new(HostSlot {
+                state: Mutex::new(HostState {
+                    busy: false,
+                    // Long enough ago that the first request to a host
+                    // never waits.
+                    last: Instant::now() - Duration::from_secs(3600),
+                    not_before: None,
+                }),
+                free: std::sync::Condvar::new(),
+            })
+        }))
     }
 
     /// Take the lease for `host`, waiting for whoever has it and then for the
     /// gap since their request to pass. Dropping the returned guard stamps
     /// the clock and lets the next thread in.
     pub fn lease(&self, host: &str) -> HostLease {
-        let slot = {
-            let mut hosts = self.hosts.lock().unwrap_or_else(|e| e.into_inner());
-            Arc::clone(hosts.entry(host.to_ascii_lowercase()).or_insert_with(|| {
-                Arc::new(HostSlot {
-                    state: Mutex::new(HostState {
-                        busy: false,
-                        // Long enough ago that the first request to a host
-                        // never waits.
-                        last: Instant::now() - Duration::from_secs(3600),
-                    }),
-                    free: std::sync::Condvar::new(),
-                })
-            }))
-        };
+        let slot = self.slot(host);
+        let interval = self.interval_for(host);
 
-        let elapsed = {
+        let (elapsed, not_before) = {
             // Poisoning is tolerated throughout: a panic in the middle of one
             // request must not make a host unfetchable for the rest of the
             // session.
@@ -455,10 +612,14 @@ impl Politeness {
                 state = slot.free.wait(state).unwrap_or_else(|e| e.into_inner());
             }
             state.busy = true;
-            state.last.elapsed()
+            (state.last.elapsed(), state.not_before)
         };
-        if elapsed < self.min_interval {
-            std::thread::sleep(self.min_interval - elapsed);
+        let mut wait = interval.saturating_sub(elapsed);
+        if let Some(until) = not_before {
+            wait = wait.max(until.saturating_duration_since(Instant::now()));
+        }
+        if !wait.is_zero() {
+            std::thread::sleep(wait);
         }
         HostLease { slot }
     }
@@ -657,6 +818,102 @@ mod tests {
             &Url::parse("https://e.org/posts/one?from=login").unwrap()
         ));
         assert!(!is_a_wall(&Url::parse("https://e.org/").unwrap()));
+    }
+
+    #[test]
+    fn the_hosts_with_a_rule_get_their_own_gap_and_everything_else_the_default() {
+        let politeness = Politeness::new(Duration::from_secs(2));
+        assert_eq!(
+            politeness.interval_for("www.reddit.com"),
+            Duration::from_secs(61)
+        );
+        assert_eq!(
+            politeness.interval_for("old.reddit.com"),
+            Duration::from_secs(61),
+            "a rule is a tail of the host, not the whole of it"
+        );
+        assert_eq!(
+            politeness.interval_for("archive.is"),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            politeness.interval_for("example.org"),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            politeness.interval_for("notreddit.com"),
+            Duration::from_secs(2),
+            "a suffix has to start at a dot"
+        );
+    }
+
+    #[test]
+    fn a_configured_gap_beats_the_table_and_the_longest_match_wins() {
+        let politeness = Politeness::new(Duration::from_secs(2)).with_host_intervals([
+            ("reddit.com".to_string(), 5),
+            ("OLD.reddit.com".to_string(), 90),
+            ("example.org".to_string(), 30),
+            ("  ".to_string(), 7),
+        ]);
+        assert_eq!(
+            politeness.interval_for("www.reddit.com"),
+            Duration::from_secs(5),
+            "the reader's own number wins over the built-in one"
+        );
+        assert_eq!(
+            politeness.interval_for("old.reddit.com"),
+            Duration::from_secs(90)
+        );
+        assert_eq!(
+            politeness.interval_for("example.org"),
+            Duration::from_secs(30)
+        );
+        assert_eq!(politeness.interval_for("e.example"), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn only_the_hosts_that_send_honest_rate_limit_headers_are_believed() {
+        let politeness = Politeness::new(Duration::from_secs(2));
+        assert!(politeness.honours_ratelimit_reset("www.reddit.com"));
+        assert!(!politeness.honours_ratelimit_reset("archive.is"));
+        assert!(!politeness.honours_ratelimit_reset("example.org"));
+    }
+
+    #[test]
+    fn a_servers_own_limiter_is_read_only_when_it_says_there_is_nothing_left() {
+        // Reddit's answer to the first request of the minute.
+        assert_eq!(
+            ratelimit_wait(Some("0.0".into()), Some("40".into())),
+            Some(Duration::from_secs(40))
+        );
+        assert_eq!(ratelimit_wait(Some("98.0".into()), Some("40".into())), None);
+        assert_eq!(ratelimit_wait(None, Some("40".into())), None);
+        assert_eq!(ratelimit_wait(Some("0.0".into()), None), None);
+        assert_eq!(ratelimit_wait(Some("0.0".into()), Some("0".into())), None);
+        assert_eq!(
+            ratelimit_wait(Some("0.0".into()), Some("86400".into())),
+            None,
+            "an hour is a header this has misunderstood"
+        );
+        assert_eq!(
+            ratelimit_wait(Some("nonsense".into()), Some("4".into())),
+            None
+        );
+    }
+
+    #[test]
+    fn a_host_held_by_its_own_limiter_waits_that_long_and_not_less() {
+        let politeness = Politeness::new(Duration::from_millis(1));
+        politeness.hold("example.org", Duration::from_millis(60));
+        // A shorter hold does not talk the longer one down.
+        politeness.hold("example.org", Duration::from_millis(1));
+        let started = Instant::now();
+        drop(politeness.lease("example.org"));
+        assert!(
+            started.elapsed() >= Duration::from_millis(40),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

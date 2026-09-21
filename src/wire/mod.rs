@@ -88,6 +88,12 @@ pub struct FetchConfig {
     /// of their own in the logs of the sites they read.
     pub user_agent_extra: String,
     pub refresh_on_start: bool,
+    /// Gaps for particular hosts, by host or by a dot-prefixed tail of one.
+    /// Beats both the default above and the table `wire::net` keeps of the
+    /// hosts a feed list of any size meets, which is what makes "the site I
+    /// read has asked me to slow down" a line in a file rather than a
+    /// release.
+    pub host_intervals: std::collections::BTreeMap<String, u64>,
 }
 
 impl Default for FetchConfig {
@@ -100,6 +106,7 @@ impl Default for FetchConfig {
             min_host_interval_secs: 2,
             user_agent_extra: String::new(),
             refresh_on_start: true,
+            host_intervals: std::collections::BTreeMap::new(),
         }
     }
 }
