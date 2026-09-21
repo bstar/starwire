@@ -22,6 +22,12 @@ grouped by what you are trying to do.
 - [On the command line](cli.md): every subcommand, all of them headless.
 - [Themes](themes.md): the format, your own themes, and the `[wire]` roles.
 
+## The screenshot
+
+`screenshot.png` belongs in this directory and is not here yet: the picture
+has still to be taken, in a real terminal on a real feed list, and the
+README's line for it is a comment until it is.
+
 ## About the project
 
 - [Status](status.md): what is done, what is in progress, and what is not

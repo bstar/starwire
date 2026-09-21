@@ -12,8 +12,9 @@ out of the page and wraps it as clean markdown in the terminal, the way
 Instapaper did — and YouTube channels are feeds too.
 
 <!-- The screenshot goes here, as docs/screenshot.png, the way STAR/AMP's
-     README carries one. There is no picture yet: the window is still being
-     built, and one of a half-drawn window would be retaken every week. -->
+     README carries one: ![STAR/WIRE](docs/screenshot.png). It is a comment
+     rather than an image because the picture has not been taken yet, and a
+     broken one is worse than none. See docs/README.md. -->
 
 [Status](docs/status.md) says how much of that is built today, area by area.
 
@@ -21,17 +22,27 @@ Read the whole thing.
 
 ## Get it
 
-Packages for Linux are on the
-[releases page](https://github.com/bstar/starwire/releases/latest): an AppImage
-that needs nothing installed, a `.deb` for Debian and Ubuntu, a portable
-tarball, and the source the Arch `PKGBUILD` builds.
-
 ```sh
-nix run github:bstar/starwire        # Nix, on Linux or Apple Silicon macOS
+nix run github:bstar/starwire                          # Linux, or Apple Silicon macOS
+nix profile install github:bstar/starwire
+cargo install --git https://github.com/bstar/starwire   # Rust 1.90 or newer
 ```
 
-[Installing](docs/installing.md) covers every route, including building from
-source. There are no system libraries to install first.
+Or take a built package off the
+[releases page](https://github.com/bstar/starwire/releases/latest), where every
+file is built by CI, checksummed in `SHA256SUMS` and attested to this
+repository and this commit:
+
+| File | For |
+| --- | --- |
+| `starwire-<version>-x86_64.AppImage` | anything, with nothing installed first |
+| `starwire_<version>-1~<release>_amd64.deb` | Debian and Ubuntu, one per generation |
+| `starwire-<version>-x86_64-linux-gnu.tar.gz` | a portable build for everything else |
+| `starwire-<version>.tar.gz` | the source, which `packaging/PKGBUILD` builds on Arch |
+
+[Installing](docs/installing.md) covers every route, including the
+home-manager module and building from source. There are no system libraries to
+install first.
 
 ## Try it
 
@@ -72,9 +83,11 @@ starwire extract https://www.phoronix.com/news/Linux-6.19-Features
 
 ## What it does not do yet
 
-Beyond this milestone: pictures inside articles, find-in-article, per-feed
+Beyond this release: pictures inside articles, find-in-article, per-feed
 refresh intervals, folders inferred from a newsboat file's comment headers,
-and podcasts and enclosures.
+podcasts and enclosures, and an optional summary from a local model.
+[Status](docs/status.md) keeps that list, and the honest one beside it of what
+has not yet been run against the real thing.
 
 ## What it will not do
 

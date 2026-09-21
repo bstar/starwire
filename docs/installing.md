@@ -31,12 +31,24 @@ setting one key in `[fetch]` leaves the rest of `[fetch]` alone.
 ## A release build
 
 Packages are on the
-[releases page](https://github.com/bstar/starwire/releases/latest): an AppImage
-that needs nothing installed, a `.deb` for Debian and Ubuntu, a portable
-tarball for anything else, and the source tarball the Arch `PKGBUILD` builds
-from.
+[releases page](https://github.com/bstar/starwire/releases/latest). Every file
+there is built by CI, hashed into `SHA256SUMS` over the bytes actually
+uploaded, and attested to this repository and the commit it was built from.
+
+| File | What it is |
+| --- | --- |
+| `starwire-<version>-x86_64.AppImage` | one file, nothing installed first. `chmod +x` it and run it. |
+| `starwire_<version>-1~<release>_amd64.deb` | one per Debian generation — `bookworm`, `trixie`, `ubuntu24.04` — because they differ only in the glibc they were built against. |
+| `starwire-<version>-x86_64-linux-gnu.tar.gz` | a portable build for any other distribution, built against the oldest glibc still worth supporting. |
+| `starwire-<version>.tar.gz` | the source. This is what `packaging/PKGBUILD` builds from; the Arch package is built and tested in CI but not published, so on Arch you build it yourself. |
 
 ## From source
+
+```sh
+cargo install --git https://github.com/bstar/starwire
+```
+
+or, to work on it:
 
 ```sh
 git clone https://github.com/bstar/starwire
