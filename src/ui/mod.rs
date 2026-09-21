@@ -30,7 +30,7 @@ pub mod markdown;
 // pub mod overlays;
 pub mod panels;
 pub mod stack;
-// pub mod status;
+pub mod status;
 pub mod theme;
 
 /// One key per scrollbar the window can draw, shared with STAR/KIT's
