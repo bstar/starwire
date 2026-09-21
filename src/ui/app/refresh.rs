@@ -254,11 +254,18 @@ impl App {
             .map(|id| id.0.to_string())
             .collect();
 
+        // Whether each list is narrowed, which decides where a cursor whose
+        // row has gone lands -- see below.
+        let filtered = (
+            !self.filter_text(ModuleId::Sources).is_empty(),
+            !self.view.filter.is_empty(),
+        );
+
         for (i, frame) in self.stack.frames_mut().enumerate() {
-            let keys = if Some(i) == sources_top {
-                &source_keys
+            let (keys, filtered) = if Some(i) == sources_top {
+                (&source_keys, filtered.0)
             } else if Some(i) == entries_top {
-                &entry_keys
+                (&entry_keys, filtered.1)
             } else {
                 continue;
             };
@@ -272,7 +279,17 @@ impl App {
                     continue;
                 }
             }
-            frame.cursor = frame.cursor.min(keys.len() - 1);
+            // The row the cursor was on is not in the list any more. Under a
+            // filter that means the filter took it away, and the matcher put
+            // the best match first, so that is where to stand: typing `/pho`
+            // and pressing `enter` should open Phoronix rather than whatever
+            // happens to sit at the index the cursor had. Otherwise keep as
+            // near to where it was as the list allows.
+            frame.cursor = if filtered {
+                0
+            } else {
+                frame.cursor.min(keys.len() - 1)
+            };
             frame.cursor_key = Some(keys[frame.cursor].clone());
         }
     }

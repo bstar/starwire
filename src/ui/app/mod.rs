@@ -1990,8 +1990,23 @@ mod tests {
         settle(&mut app, &mut fk);
         assert!(matches!(app.active_source(), Some((Selection::Feed(_), _))));
 
-        // `esc` puts every row back.
+        // A filter that takes the cursor's row away stands on the best
+        // match rather than on whatever the old index now points at.
         app.focus(ModuleId::Sources);
+        app.key(code(KeyCode::Esc));
+        settle(&mut app, &mut fk);
+        app.key(code(KeyCode::End));
+        settle(&mut app, &mut fk);
+        assert!(app.cursor_of(ModuleId::Sources) > 0, "at the bottom");
+        app.key(key('/'));
+        for c in "te".chars() {
+            app.key(key(c));
+        }
+        settle(&mut app, &mut fk);
+        assert!(app.view.source_rows.len() > 1, "more than one match");
+        assert_eq!(app.cursor_of(ModuleId::Sources), 0);
+
+        // `esc` puts every row back.
         app.key(code(KeyCode::Esc));
         settle(&mut app, &mut fk);
         assert_eq!(app.view.source_rows.len(), all);
