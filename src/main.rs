@@ -3,6 +3,7 @@
 mod cli;
 mod config;
 mod paths;
+mod session;
 mod ui;
 mod wire;
 
