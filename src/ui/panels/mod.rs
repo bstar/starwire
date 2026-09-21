@@ -25,7 +25,7 @@ use super::keymap::Module;
 // small text helpers every panel would otherwise keep its own copy of.
 // Re-exported under their old names so the panels to come keep the imports
 // the family's other applications already have.
-pub use starkit::chrome::{empty, rgb};
+pub use starkit::chrome::rgb;
 pub use starkit::text::fit;
 pub use starkit::wrap::width_of;
 

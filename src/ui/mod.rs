@@ -24,6 +24,7 @@ use anyhow::Result;
 
 pub mod keymap;
 pub mod layout;
+pub mod markdown;
 pub mod panels;
 pub mod stack;
 pub mod theme;

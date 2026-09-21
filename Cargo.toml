@@ -72,6 +72,18 @@ dom_smoothie = "0.18"
 # about the second `html5ever` this costs.
 htmd = "0.5"
 
+# CommonMark, in the reader. The core stores an article as markdown and
+# nothing else; this is what turns that text back into headings, lists,
+# quotes, code blocks, tables and numbered links at whatever width the panel
+# happens to be. A pull parser rather than a tree: the reader walks the
+# events once into its own `Doc` and never holds a borrowed AST, which is
+# what lets the laid-out result be cached behind an `Arc` and shared between
+# frames. `default-features = false` drops the HTML writer, the `getopts`
+# binary and the escaper -- this never emits HTML, and the tables,
+# strikethrough and footnote extensions it does want are runtime `Options`
+# rather than cargo features.
+pulldown-cmark = { version = "0.13", default-features = false }
+
 # Canonicalising what a feed says a link is: `join` for a relative href,
 # query-pair editing for the tracking parameters `clean_url` strips, and the
 # host comparison politeness and the YouTube normalisation are both built on.
@@ -130,6 +142,17 @@ toml = "0.9"
 # is how a program comes to emit something that is not quite JSON the first
 # time a feed title contains a quotation mark.
 serde_json = "1"
+
+# The system clipboard, for `y`. Text only, which is why the default
+# `image-data` feature is off: this copies a link and never a picture, and
+# leaving it on would pull a second copy of the `image` crate into a tree
+# whose one copy comes through STAR/KIT. `wayland-data-control` is what makes
+# a copy survive the program exiting under a Wayland compositor -- without it
+# the clipboard is owned by a process that has gone away and the paste lands
+# nowhere.
+arboard = { version = "3.6", default-features = false, features = [
+    "wayland-data-control",
+] }
 
 # The channels between the window, the db thread and the net pool. The UI loop
 # is synchronous and drains events once per frame; there is no async runtime in
