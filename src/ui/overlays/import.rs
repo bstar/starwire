@@ -32,7 +32,7 @@ use starkit::ratatui::style::Style;
 
 use crate::ui::panels::rgb;
 use crate::ui::theme::Theme;
-use crate::wire::import::{newsboat, ImportReport};
+use crate::wire::import::{newsboat, plan_newsboat, ImportReport};
 
 /// A newsboat list worth offering, and what is in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,10 +50,16 @@ pub struct Probe {
 /// Look under `home` for a newsboat list, and count what is in it.
 ///
 /// The paths are the core's own ([`newsboat::default_urls_paths`]), so this
-/// and `Handle::probe_newsboat` can never be looking at different files. The
-/// parsing is the core's too -- a `urls` file is a decade of hand edits, and
-/// a second, laxer reading of one here would report numbers the import then
-/// disagreed with.
+/// and `Handle::probe_newsboat` can never be looking at different files.
+///
+/// The counting is the core's own too: [`plan_newsboat`] is exactly what the
+/// import will do with the file, and the plan's own `video_count` is the
+/// number the second line here is for. A laxer reading -- counting lines
+/// with `youtube.com` in them -- was the first version of this and it was
+/// wrong by seven on the reference list, because `scriptbarrel.com` proxies
+/// a channel under its own host and `canonicalise` reduces it to the
+/// channel's own feed. A question whose numbers the answer then contradicts
+/// is worse than no numbers.
 pub fn probe(home: &Path) -> Option<Probe> {
     let path = newsboat::default_urls_paths(home)
         .into_iter()
@@ -62,22 +68,12 @@ pub fn probe(home: &Path) -> Option<Probe> {
         .into_iter()
         .find(|p| p.is_file());
     let text = std::fs::read_to_string(&path).ok()?;
-    let mut feeds = 0usize;
-    let mut videos = 0usize;
-    for line in newsboat::parse_urls(&text) {
-        if let newsboat::UrlsLine::Feed(feed) = line {
-            feeds += 1;
-            let url = feed.url.to_ascii_lowercase();
-            if url.contains("youtube.com") || url.contains("youtu.be") {
-                videos += 1;
-            }
-        }
-    }
+    let plan = plan_newsboat(&text, None);
     Some(Probe {
         path,
         cache,
-        feeds,
-        videos,
+        feeds: plan.feeds.len(),
+        videos: plan.video_count(),
     })
 }
 
@@ -484,6 +480,31 @@ mod tests {
         assert!(p.videos > 0, "{p:?}");
         assert!(p.videos < p.feeds, "{p:?}");
         assert!(p.cache.is_none(), "no cache was written beside it");
+    }
+
+    /// The question's numbers are the import's numbers, which is the whole
+    /// reason this goes through the core's planner.
+    #[test]
+    fn the_probe_counts_what_the_import_will_actually_do() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata")
+            .join("import")
+            .join("urls");
+        let text = std::fs::read_to_string(&fixture).unwrap();
+        let plan = plan_newsboat(&text, None);
+
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join(".config").join("newsboat");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::copy(&fixture, dir.join("urls")).unwrap();
+        let p = probe(home.path()).expect("the file is there");
+
+        assert_eq!(p.feeds, plan.feeds.len());
+        assert_eq!(p.videos, plan.video_count());
+        assert!(
+            p.videos > text.lines().filter(|l| l.contains("youtube.com")).count(),
+            "the proxied channels have to be counted too: {p:?}"
+        );
     }
 
     #[test]
