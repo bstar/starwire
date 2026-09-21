@@ -233,12 +233,13 @@ pub fn rename_folder(db: &Db, id: FolderId, name: &str) -> Result<()> {
 /// through the schema's `ON DELETE SET NULL`. Deleting a folder is a tidying
 /// action, and one that took the feeds with it would be a trap.
 pub fn remove_folder(db: &Db, id: FolderId) -> Result<()> {
-    db.conn.execute("DELETE FROM folder WHERE id = ?1", [id.0])?;
+    db.conn
+        .execute("DELETE FROM folder WHERE id = ?1", [id.0])?;
     Ok(())
 }
 
 pub fn get(db: &Db, id: FeedId) -> Result<Option<FeedRow>> {
-    Ok(one(db, "f.id = ?1", params![id.0])?)
+    one(db, "f.id = ?1", params![id.0])
 }
 
 /// Find a feed by what somebody typed: a row id, or a URL in any of the
@@ -440,8 +441,24 @@ mod tests {
     #[test]
     fn adding_the_same_url_twice_is_one_feed() {
         let db = db();
-        let a = add(&db, "https://example.org/feed", None, FeedKind::Web, None, None).unwrap();
-        let b = add(&db, "https://example.org/feed", None, FeedKind::Web, None, None).unwrap();
+        let a = add(
+            &db,
+            "https://example.org/feed",
+            None,
+            FeedKind::Web,
+            None,
+            None,
+        )
+        .unwrap();
+        let b = add(
+            &db,
+            "https://example.org/feed",
+            None,
+            FeedKind::Web,
+            None,
+            None,
+        )
+        .unwrap();
         assert!(a.is_new());
         assert!(!b.is_new());
         assert_eq!(a.id(), b.id());
@@ -492,7 +509,10 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(get(&db, id).unwrap().unwrap().title.as_deref(), Some("First"));
+        assert_eq!(
+            get(&db, id).unwrap().unwrap().title.as_deref(),
+            Some("First")
+        );
     }
 
     #[test]
@@ -528,9 +548,16 @@ mod tests {
     #[test]
     fn a_rename_wins_and_an_empty_rename_clears_it() {
         let db = db();
-        let id = add(&db, "https://e.org/f", None, FeedKind::Web, Some("Feed"), None)
-            .unwrap()
-            .id();
+        let id = add(
+            &db,
+            "https://e.org/f",
+            None,
+            FeedKind::Web,
+            Some("Feed"),
+            None,
+        )
+        .unwrap()
+        .id();
         rename(&db, id, Some("Mine")).unwrap();
         assert_eq!(get(&db, id).unwrap().unwrap().display_title(), "Mine");
         rename(&db, id, Some("   ")).unwrap();
@@ -552,17 +579,23 @@ mod tests {
         .id();
         assert_eq!(find(&db, &id.to_string()).unwrap().unwrap().id, id);
         assert_eq!(
-            find(&db, "https://www.youtube.com/feeds/videos.xml?channel_id=UCabc")
-                .unwrap()
-                .unwrap()
-                .id,
+            find(
+                &db,
+                "https://www.youtube.com/feeds/videos.xml?channel_id=UCabc"
+            )
+            .unwrap()
+            .unwrap()
+            .id,
             id
         );
         assert_eq!(
-            find(&db, "https://scriptbarrel.com/xml.cgi?channel_id=UCabc&name=Thing")
-                .unwrap()
-                .unwrap()
-                .id,
+            find(
+                &db,
+                "https://scriptbarrel.com/xml.cgi?channel_id=UCabc&name=Thing"
+            )
+            .unwrap()
+            .unwrap()
+            .id,
             id,
             "the URL in somebody's urls file still finds the feed it became"
         );
@@ -668,10 +701,7 @@ mod tests {
             .id();
         log_fetch(&db, id, Some(200), Some(1024), Some(3), 42, None).unwrap();
         db.conn
-            .execute(
-                "UPDATE fetch_log SET at = ?1",
-                [now() - 8 * 24 * 60 * 60],
-            )
+            .execute("UPDATE fetch_log SET at = ?1", [now() - 8 * 24 * 60 * 60])
             .unwrap();
         assert_eq!(sweep_fetch_log(&db).unwrap(), 1);
     }

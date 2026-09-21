@@ -86,7 +86,9 @@ impl Db {
     /// the whole reason it is used rather than a file watch: WAL means the
     /// file's mtime is not the question.
     pub fn data_version(&self) -> Result<i64> {
-        Ok(self.conn.query_row("PRAGMA data_version", [], |r| r.get(0))?)
+        Ok(self
+            .conn
+            .query_row("PRAGMA data_version", [], |r| r.get(0))?)
     }
 }
 
@@ -148,7 +150,10 @@ mod tests {
             .conn
             .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(on, 1, "the cascade rules in the schema are decoration without this");
+        assert_eq!(
+            on, 1,
+            "the cascade rules in the schema are decoration without this"
+        );
     }
 
     #[test]

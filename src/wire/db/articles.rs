@@ -47,7 +47,11 @@ pub(super) fn create_pending(
             markdown,
             parsed.author,
             parsed.url,
-            if status.is_pending() { None } else { Some(now()) },
+            if status.is_pending() {
+                None
+            } else {
+                Some(now())
+            },
         ],
     )?;
     Ok(())
@@ -223,9 +227,16 @@ mod tests {
 
     fn seeded() -> Db {
         let mut db = Db::open_in_memory().unwrap();
-        let feed = feeds::add(&db, "https://e.org/f", None, FeedKind::Web, Some("Feed"), None)
-            .unwrap()
-            .id();
+        let feed = feeds::add(
+            &db,
+            "https://e.org/f",
+            None,
+            FeedKind::Web,
+            Some("Feed"),
+            None,
+        )
+        .unwrap()
+        .id();
         entries::upsert_parsed(
             &mut db,
             feed,
@@ -253,7 +264,10 @@ mod tests {
     }
 
     fn first(db: &Db) -> EntryId {
-        entries::page(db, &Selection::All, false, 0, 1).unwrap().rows[0].id
+        entries::page(db, &Selection::All, false, 0, 1)
+            .unwrap()
+            .rows[0]
+            .id
     }
 
     #[test]
@@ -330,7 +344,11 @@ mod tests {
             },
         )
         .unwrap();
-        let urls: Vec<String> = pending(&db, 10).unwrap().into_iter().map(|(_, u)| u).collect();
+        let urls: Vec<String> = pending(&db, 10)
+            .unwrap()
+            .into_iter()
+            .map(|(_, u)| u)
+            .collect();
         assert_eq!(urls[0], "https://e.org/3");
     }
 
@@ -479,7 +497,9 @@ mod tests {
             },
         )
         .unwrap();
-        let rows = entries::page(&db, &Selection::All, false, 0, 10).unwrap().rows;
+        let rows = entries::page(&db, &Selection::All, false, 0, 10)
+            .unwrap()
+            .rows;
         put(
             &db,
             rows[0].id,

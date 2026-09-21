@@ -222,10 +222,7 @@ fn selection_where(sel: &Selection) -> (String, Option<String>) {
         Selection::Feed(id) => (format!("e.feed_id = {}", id.0), None),
         Selection::Folder(id) => (format!("f.folder_id = {}", id.0), None),
         Selection::Starred => ("e.starred = 1".into(), None),
-        Selection::Videos => (
-            format!("e.kind = {}", EntryKind::Video.as_i64()),
-            None,
-        ),
+        Selection::Videos => (format!("e.kind = {}", EntryKind::Video.as_i64()), None),
         Selection::Search(q) => (
             "e.id IN (SELECT rowid FROM article_fts WHERE article_fts MATCH ?1)".into(),
             Some(articles::fts_query(q)),
@@ -303,9 +300,11 @@ pub fn get(db: &Db, id: EntryId) -> Result<Option<EntryRow>> {
 pub fn content_html(db: &Db, id: EntryId) -> Result<Option<String>> {
     Ok(db
         .conn
-        .query_row("SELECT content_html FROM entry WHERE id = ?1", [id.0], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT content_html FROM entry WHERE id = ?1",
+            [id.0],
+            |r| r.get(0),
+        )
         .optional()?
         .flatten())
 }
@@ -425,7 +424,12 @@ pub fn retain(db: &mut Db, keep_days: u32, max_per_feed: usize) -> Result<Retain
 }
 
 /// Hold a newsboat read mark until its entry arrives.
-pub fn put_imported_read(db: &rusqlite::Connection, feed_url: &str, guid: &str, url: Option<&str>) -> Result<()> {
+pub fn put_imported_read(
+    db: &rusqlite::Connection,
+    feed_url: &str,
+    guid: &str,
+    url: Option<&str>,
+) -> Result<()> {
     db.execute(
         "INSERT INTO imported_read(feed_url, guid, url) VALUES (?1, ?2, ?3)
          ON CONFLICT(feed_url, guid) DO NOTHING",
@@ -469,9 +473,16 @@ mod tests {
 
     fn seeded() -> (Db, FeedId) {
         let mut db = Db::open_in_memory().unwrap();
-        let id = feeds::add(&db, "https://e.org/f", None, FeedKind::Web, Some("Feed"), None)
-            .unwrap()
-            .id();
+        let id = feeds::add(
+            &db,
+            "https://e.org/f",
+            None,
+            FeedKind::Web,
+            Some("Feed"),
+            None,
+        )
+        .unwrap()
+        .id();
         let parsed = ParsedFeed {
             title: Some("Feed".into()),
             site_url: None,
@@ -625,7 +636,10 @@ mod tests {
         assert_eq!(videos.total, 1);
         assert_eq!(videos.rows[0].title, "A video");
         assert_eq!(videos.rows[0].kind, EntryKind::Video);
-        assert_eq!(page(&db, &Selection::Starred, false, 0, 50).unwrap().total, 0);
+        assert_eq!(
+            page(&db, &Selection::Starred, false, 0, 50).unwrap().total,
+            0
+        );
     }
 
     #[test]
@@ -695,9 +709,16 @@ mod tests {
     #[test]
     fn retention_caps_a_busy_feed_by_count_as_well_as_by_age() {
         let mut db = Db::open_in_memory().unwrap();
-        let feed = feeds::add(&db, "https://hnrss.org/newcomments", None, FeedKind::Hn, None, None)
-            .unwrap()
-            .id();
+        let feed = feeds::add(
+            &db,
+            "https://hnrss.org/newcomments",
+            None,
+            FeedKind::Hn,
+            None,
+            None,
+        )
+        .unwrap()
+        .id();
         let parsed = ParsedFeed {
             entries: (0..50)
                 .map(|n| ParsedEntry {
