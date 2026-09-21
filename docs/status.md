@@ -17,14 +17,12 @@ against the real thing this says so.
 | **Importing** | newsboat's urls file and cache (titles and read marks, read-only, never the bodies), OPML in and out, Google Takeout, `yt-dlp` subscriptions. |
 | **YouTube** | Six spellings of a channel reduce to one feed row. Handles and video pages resolve by reading the page, falling back to `yt-dlp`. |
 | **The command line** | `fetch`, `list`, `show`, `add`, `remove`, `import`, `export`, `youtube`, `extract`, and `--replay` to run the whole thing with no network. |
-| **The running core** | One thread owns the database; a pool fetches and extracts on an urgent lane and a background one. One pure `apply` is the only writer, a cancel drops what is queued before it opens a connection, and another process's writes are noticed through `PRAGMA data_version`. `Handle` is the contract the window will use: send a command, drain events, read the state. |
+| **The running core** | One thread owns the database; a pool fetches and extracts on an urgent lane and a background one. One pure `apply` is the only writer, a cancel drops what is queued before it opens a connection, and another process's writes are noticed through `PRAGMA data_version`. `Handle` is the contract the window programs against: send a command, drain events, read the state. |
+| **The window** | The column of three docked modules, the stack they are drilled through, the reader's markdown pipeline, the six overlays, the key table and the `[wire]` theme roles. `starwire` with no arguments takes the terminal; [The stack](the-stack.md) describes how it moves and [Keys and the mouse](keys-and-mouse.md) is generated from the table itself. Whole frames are kept as snapshots, so a layout change is a diff of a drawn screen. |
 
 ## Not started
 
-**The window.** The column of docked modules, the stack, the reader, the
-overlays, the keymap and the `[wire]` theme roles are designed and none of it
-is built. `starwire` with no arguments starts the core, says where the window
-is, and exits cleanly.
+Nothing in this milestone. What is deliberately outside it is below.
 
 ## Deliberately outside this milestone
 
@@ -52,5 +50,12 @@ different claim from having been run against the network. Specifically: what
 extraction looks like across a whole feed list over a week, whether real
 servers' conditional requests behave as expected, Reddit's rate limiter,
 `yt-dlp` itself, a newsboat cache written by an older newsboat, and two
-writers on one database at the same time. `AGENTS.md` keeps that list
-current.
+writers on one database at the same time.
+
+The window has been run by hand in kitty and in tmux against the replay
+fixture and against a live feed list, and every frame it draws is kept as a
+snapshot. What that has *not* covered: the terminals nobody here has —
+Alacritty, WezTerm, Ghostty, the macOS Terminal — a forty-one feed list at
+sixty columns for a whole evening, `mpv` and a browser launched from inside
+the alternate screen on a desktop other than this one, and the clipboard over
+ssh. `AGENTS.md` keeps that list current.

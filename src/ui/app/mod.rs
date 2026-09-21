@@ -1386,8 +1386,15 @@ impl App {
         }
         let a = self.view.article.as_ref()?;
         let mut parts: Vec<String> = Vec::new();
-        if let Some(author) = &a.byline {
-            parts.push(author.clone());
+        // A byline of "Unknown" is what a site puts in the field when it
+        // has nobody to name, and repeating it says less than nothing.
+        if let Some(author) = a
+            .byline
+            .as_deref()
+            .map(str::trim)
+            .filter(|b| !b.is_empty() && !b.eq_ignore_ascii_case("unknown"))
+        {
+            parts.push(author.to_string());
         }
         if let Some(site) = &a.site_name {
             parts.push(site.clone());

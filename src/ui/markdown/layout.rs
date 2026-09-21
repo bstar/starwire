@@ -23,7 +23,7 @@
 //! | list | `• ` or `n. `, the item's blocks indented under it, two columns per level to four levels |
 //! | rule | `─` across the width, in `rule_fg` |
 //! | table | aligned columns when they fit, else one `header: cell` line per cell |
-//! | image | `[image: alt]` in `image_fg` |
+//! | image | `[image: alt]` in `image_fg`, or `[image]` with no alt text |
 //!
 //! A blank line separates one block from the next. A code block is the one
 //! thing that is never reflowed: a line of code broken at a space is a line
@@ -202,7 +202,15 @@ impl<'a> Writer<'a> {
             } => self.table(align, header, rows),
             Block::Image(alt) => {
                 let style = Style::default().fg(rgb(self.theme.wire.image_fg));
-                let text = format!("[image: {alt}]");
+                // A picture with no alt text at all is commoner in a real
+                // article than one with any -- a decorative header image,
+                // usually -- and `[image: ]` reads as a fault where
+                // `[image]` reads as a picture nobody described.
+                let text = if alt.trim().is_empty() {
+                    "[image]".to_string()
+                } else {
+                    format!("[image: {alt}]")
+                };
                 self.emit(&[(text.clone(), style, None)], self.width, None);
                 self.say(&text);
             }
@@ -868,6 +876,12 @@ mod tests {
         for line in &r.lines {
             assert!(row_width(line) <= 24);
         }
+    }
+
+    #[test]
+    fn an_image_with_no_alt_text_is_just_a_picture() {
+        let r = render("![](https://example.org/header.png)\n", 40);
+        assert_eq!(drawn(&r)[0], "[image]");
     }
 
     #[test]

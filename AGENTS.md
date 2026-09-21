@@ -247,4 +247,19 @@ of protocol details still waiting on one. Specifically, still unverified:
 - **Two writers at once.** WAL, `busy_timeout` and the `data_version` poll are
   the design; a timer and a reader have not actually been run against one file
   at the same time.
-- **The window.** It does not exist yet. `src/ui/mod.rs` is a stub.
+- **The window, in other terminals.** It has been run by eye in kitty and in
+  tmux, against the replay fixture and against a real feed list, and every
+  frame it draws is an `insta` snapshot. Nothing here has seen it in
+  Alacritty, WezTerm, Ghostty or the macOS Terminal, and the graphics probe
+  in particular is the part most likely to answer differently in one of them.
+- **The window, for a whole evening.** Forty-one feeds at sixty columns, an
+  article a thousand rows long, a refresh running while somebody reads. The
+  frame budget is thirty-three milliseconds and nothing in a drawn frame
+  allocates per row, but that is an argument rather than a measurement.
+- **Launching somebody else's program from inside the alternate screen.**
+  `mpv --terminal=no` and `xdg-open` are detached with every fd on
+  `/dev/null`, which is the right shape; it has been seen working on one
+  desktop. A browser that insists on stealing the terminal has not been met.
+- **The clipboard over ssh.** `y` copies through `arboard`, which needs a
+  display at the other end. The failure path is a note in the status line and
+  is tested; the success path over a forwarded display is not.
