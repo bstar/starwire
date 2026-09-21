@@ -47,16 +47,12 @@ pub mod testing;
 pub mod worker;
 pub mod youtube;
 
-// Every name here is part of the contract the window programs against, and
-// the window lands in a later package -- the same reason `dead_code` is
-// allowed in this tree at all. Take the allow away when `src/ui/` uses them.
-#[allow(unused_imports)]
-pub use handle::{
-    Command, Event, Handle, HandleParts, ImportOffer, Note, NoteLevel, OpenKind, RefreshScope,
-    Setting,
-};
-#[allow(unused_imports)]
-pub use state::{EntryPage, RefreshProgress, RuntimeSettings, State};
+// The contract the window programs against, spelled here so `src/ui/` says
+// `wire::Command` rather than `wire::handle::Command`. Exactly what is
+// reached for: a `pub use` nothing has asked for is a warning in a binary
+// crate, and the rest of each module is public where it lives.
+pub use handle::{Command, Event, Handle, ImportOffer, NoteLevel, OpenKind, RefreshScope, Setting};
+pub use state::{RefreshProgress, State};
 
 /// Everything the terminal hands the core once, at startup.
 ///

@@ -21,8 +21,7 @@ use crate::ui::panels::{entries, sources};
 use crate::ui::stack::Level;
 use crate::wire::feed::{ArticleView, EntryId, FeedId, FolderId, Selection};
 use crate::wire::import::ImportReport;
-use crate::wire::state::RefreshProgress;
-use crate::wire::ImportOffer;
+use crate::wire::{ImportOffer, RefreshProgress};
 
 use super::App;
 

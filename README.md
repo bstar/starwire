@@ -72,13 +72,9 @@ starwire extract https://www.phoronix.com/news/Linux-6.19-Features
 
 ## What it does not do yet
 
-**The window.** The column of docked modules, the stack, the reader and the
-sixteen themes are designed and are not built: `starwire` with no arguments
-says so and exits. Everything above works today from the command line.
-
-Beyond that, and beyond this milestone: pictures inside articles,
-find-in-article, per-feed refresh intervals, folders inferred from a newsboat
-file's comment headers, podcasts and enclosures.
+Beyond this milestone: pictures inside articles, find-in-article, per-feed
+refresh intervals, folders inferred from a newsboat file's comment headers,
+and podcasts and enclosures.
 
 ## What it will not do
 

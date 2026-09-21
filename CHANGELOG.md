@@ -7,6 +7,43 @@ and this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **The window.** `starwire` with no arguments takes the terminal and draws
+  one column of three docked modules — the sources, the entries of whichever
+  source is chosen, and the article — over a status row. The focused module
+  is expanded and the other two fold to a line that says what is open in
+  them. Thirty frames a second, synchronous, with the core on its own
+  threads behind a handle: one read lock a frame, dropped before anything is
+  drawn.
+- **The first run.** On an empty feed list with a newsboat installation in
+  the usual place, an overlay offers to import it — how many feeds, where
+  from, and how many of them turn out to be YouTube channels once every
+  spelling of a channel has been reduced to its feed. Saying yes shows what
+  came of it, including every line that was skipped and why; saying no
+  records the refusal in the database, so the offer never returns. `alt+i`
+  opens it again, and on a machine with no newsboat it asks for an OPML file
+  instead.
+- **Reading.** An article is drawn at `[reading] width`, centred, with its
+  headline drawn once however many times the page said it. `<` and `>` step
+  the width and write the line back to `config.toml`. `n` and `p` replace
+  what the reader is looking at rather than pushing a level, so the place
+  you had reached in each of the last few articles is still there when you
+  come back to one — and the session file keeps those places between runs,
+  along with the source and the entry that were open.
+- **Six overlays.** The key list, the import, a feed to add, the settings,
+  a confirmation before anything destructive, and a search. One is ever open,
+  it takes every key while it is, `esc` closes it and `ctrl+c` still quits.
+  Every settings row changes the running program and rewrites exactly one
+  line of `config.toml`, leaving the comments the template was written to
+  carry.
+- **The mouse.** Click to move the cursor, double-click to open, right-click
+  an entry to star it, click a crumb to jump there, click a link in an
+  article to open it, click a header word to do what it says, drag a
+  scrollbar, and click a folded module to open it.
+- **Frame snapshots.** Every scenario the window can draw — both themes, a
+  hundred by thirty and the sixty-by-twenty-one floor, the three articles
+  that are not text, the overlays, and both ways below the floor — is kept
+  as a snapshot, so a layout change is a diff of a drawn screen rather than
+  an argument about rectangles.
 - **The window's foundations.** The column is a stack of levels -- the
   sources, the entries of whichever source is chosen, the article -- and a
   level carries the core's own `Selection` rather than a second spelling of

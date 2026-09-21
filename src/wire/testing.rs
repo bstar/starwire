@@ -131,7 +131,7 @@ impl Fixture {
 ///
 /// Everything a [`crate::wire::Handle`] has -- the state, the senders, the
 /// event sink -- and the receiving ends of the three job queues, so that a
-/// test (and the window's own fixture in a later package) can run the real
+/// test -- and the window's own fixture in `ui/fake.rs` -- can run the real
 /// `worker::{perform_db, perform_net}` inline on its own thread and fold
 /// each result in through the real `state::apply`. No timing, no sleeping,
 /// no socket, and the same code the threads run.

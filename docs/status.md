@@ -26,8 +26,9 @@ Nothing in this milestone. What is deliberately outside it is below.
 
 ## Deliberately outside this milestone
 
-- Pictures inside articles. The markdown keeps them and the reader will draw
-  an `[image: alt]` line; nothing is downloaded.
+- Pictures inside articles. The markdown keeps them and the reader draws an
+  `[image: alt]` line -- or just `[image]` when the page gave no alt text;
+  nothing is downloaded.
 - Find-in-article.
 - Per-feed refresh intervals.
 - Folders inferred from a newsboat file's `# comment` headers. The importer
