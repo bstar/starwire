@@ -58,8 +58,63 @@ fn one_to_two(conn: &Connection) -> Result<()> {
     add_column(conn, "article", "retry_after", "INTEGER")?;
     add_column(conn, "entry", "final_url", "TEXT")?;
     backfill_failed_markdown(conn)?;
+    offer_the_transient_failures_another_go(conn)?;
     recanonicalise_feed_urls(conn)?;
     Ok(())
+}
+
+/// Let the failures that were somebody's bad minute come round again.
+///
+/// 0.0.1 had no notion of a retryable failure, so every one of the
+/// eighty-five in the reference database was final -- including seventeen
+/// 429s from one host that had been asked too quickly and six fifteen-second
+/// timeouts on heavy pages. Those are exactly the ones this version's
+/// per-hop leases and per-host gaps were written for, and leaving them alone
+/// would mean the fix only ever reached entries that arrived afterwards.
+///
+/// Read out of the error text, because that is the only record there is of
+/// why they failed. `attempts` is untouched, so each of them gets what is
+/// left of its three and no more.
+fn offer_the_transient_failures_another_go(conn: &Connection) -> Result<()> {
+    let rows: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT entry_id, error FROM article
+             WHERE status = 3 AND retry_after IS NULL AND error IS NOT NULL
+               AND attempts < ?1",
+        )?;
+        let rows = stmt.query_map([super::articles::MAX_ATTEMPTS], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let due = super::now();
+    for (entry_id, error) in rows {
+        if !was_transient(&error) {
+            continue;
+        }
+        conn.execute(
+            "UPDATE article SET retry_after = ?2 WHERE entry_id = ?1",
+            rusqlite::params![entry_id, due],
+        )?;
+    }
+    Ok(())
+}
+
+/// Whether a reason 0.0.1 wrote down was a fact about that minute.
+///
+/// The strings are 0.0.1's own: `the site answered 429`, `the site answered
+/// 503`, `timeout: global`. Anything else -- a 401, a 403, a page that does
+/// not read like an article, a body over the cap -- stays where it is, for
+/// the same reason `extract::run` does not retry it.
+fn was_transient(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    if error.contains("timeout") || error.contains("timed out") {
+        return true;
+    }
+    error
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|word| word.parse::<u16>().ok())
+        .any(|status| status == 429 || (500..600).contains(&status))
 }
 
 /// Give every failed extraction the feed's own text.
@@ -311,10 +366,16 @@ CREATE TABLE IF NOT EXISTS meta (
              INSERT INTO entry(id, feed_id, guid, url, title, fetched_at, content_html)
              VALUES (1, 1, 'a', 'https://e.org/a', 'Behind a wall', 0,
                      '<p>Two sentences, and a <a href=\"/rest\">link</a> to the rest.</p>'),
-                    (2, 1, 'b', 'https://e.org/b', 'Nothing at all', 0, NULL);
+                    (2, 1, 'b', 'https://e.org/b', 'Nothing at all', 0, NULL),
+                    (3, 1, 'c', 'https://e.org/c', 'Asked too quickly', 0, '<p>Text.</p>'),
+                    (4, 1, 'd', 'https://e.org/d', 'Took too long', 0, '<p>Text.</p>'),
+                    (5, 1, 'e', 'https://e.org/e', 'Out of attempts', 0, '<p>Text.</p>');
              INSERT INTO article(entry_id, status, attempts, error)
              VALUES (1, 3, 1, 'the site answered 403'),
-                    (2, 3, 1, 'the site answered 403');",
+                    (2, 3, 1, 'the site answered 403'),
+                    (3, 3, 1, 'the site answered 429'),
+                    (4, 3, 1, 'timeout: global'),
+                    (5, 3, 3, 'the site answered 429');",
         )
         .unwrap();
         conn.pragma_update(None, "user_version", 1).unwrap();
@@ -368,6 +429,52 @@ CREATE TABLE IF NOT EXISTS meta (
             })
             .unwrap();
         assert_eq!(empty, None);
+    }
+
+    #[test]
+    fn the_failures_that_were_a_bad_minute_are_offered_another_go() {
+        let conn = v1_file();
+        open_as_the_program_does(&conn);
+
+        let retry = |entry: i64| -> Option<i64> {
+            conn.query_row(
+                "SELECT retry_after FROM article WHERE entry_id = ?1",
+                [entry],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert!(retry(3).is_some(), "a 429 is worth asking again");
+        assert!(retry(4).is_some(), "so is a timeout");
+        assert_eq!(retry(1), None, "a 403 is a fact about the page");
+        assert_eq!(
+            retry(5),
+            None,
+            "and one that has spent its three attempts is done whatever it said"
+        );
+    }
+
+    #[test]
+    fn only_the_reasons_that_were_the_minute_count_as_transient() {
+        for transient in [
+            "the site answered 429",
+            "the site answered 503",
+            "timeout: global",
+            "nytimes.com answered 500",
+        ] {
+            assert!(was_transient(transient), "{transient}");
+        }
+        for permanent in [
+            "the site answered 401",
+            "the site answered 402",
+            "the site answered 403",
+            "the site answered 404",
+            "the page does not read like an article",
+            "the body was larger than the 2097152 byte limit",
+            "configured for https only: http://e.org/",
+        ] {
+            assert!(!was_transient(permanent), "{permanent}");
+        }
     }
 
     #[test]
