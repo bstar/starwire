@@ -666,8 +666,13 @@ mod tests {
         assert_eq!(feed_count, 5, "the replay directory's own feed list");
 
         handle.send(Command::Refresh(RefreshScope::All));
+        // `last_refresh` is stamped when one *starts*, so this waits for a
+        // refresh that has both begun and ended rather than for the moment
+        // before the first job is picked up. The counters are not the test:
+        // they go back to nothing behind the last event, and that event is
+        // what is asserted below.
         let events = wait(&handle, "the refresh to finish", |s| {
-            s.refresh.total > 0 && s.refresh.done == s.refresh.total && !s.refresh.running
+            s.last_refresh.is_some() && !s.refresh.running && s.fetching.is_empty()
         });
         assert!(
             events.iter().any(|e| matches!(

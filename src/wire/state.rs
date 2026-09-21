@@ -221,6 +221,16 @@ pub struct State {
     /// until its answer comes back, which is what stops a held-down `R` from
     /// opening four connections to one server.
     pub fetching: BTreeSet<FeedId>,
+    /// Every feed counted into [`RefreshProgress::total`] for the refresh now
+    /// running, cleared the moment one stops.
+    ///
+    /// The database answers `due` with the whole list every time it is asked
+    /// -- the interval is the tick's business, not the query's -- so a second
+    /// `Refresh` arriving while the first is still running used to add every
+    /// feed that had already come back to the total a second time, and the
+    /// bar read `12 of 82` for forty-one feeds. A feed is counted once per
+    /// refresh, and this is the set that says which.
+    pub refresh_counted: BTreeSet<FeedId>,
     /// Entries waiting for their page to be pulled, newest first.
     pub extract_queue: VecDeque<(EntryId, String)>,
     pub extract_inflight: usize,
@@ -256,6 +266,7 @@ impl State {
             open_entry: None,
             refresh: RefreshProgress::default(),
             fetching: BTreeSet::new(),
+            refresh_counted: BTreeSet::new(),
             extract_queue: VecDeque::new(),
             extract_inflight: 0,
             import_offer: None,
@@ -704,9 +715,16 @@ fn done_due(
     if generation != state.refresh_generation {
         return Effects::none();
     }
+    // A feed already in flight, and a feed this refresh has already counted
+    // and finished with, are both left out: the bar counts each feed once
+    // for as long as one refresh is running.
     let wanted: Vec<DueFeed> = feeds
         .into_iter()
-        .filter(|f| in_scope(state, &scope, f.id) && !state.fetching.contains(&f.id))
+        .filter(|f| {
+            in_scope(state, &scope, f.id)
+                && !state.fetching.contains(&f.id)
+                && !state.refresh_counted.contains(&f.id)
+        })
         .collect();
 
     let mut effects = Effects::none();
@@ -721,12 +739,9 @@ fn done_due(
         if !state.fetching.is_empty() {
             return effects;
         }
-        state.refresh.running = false;
-        state.refresh.current = None;
-        effects.push_event(Event::Progress {
-            done: state.refresh.done,
-            total: state.refresh.total,
-        });
+        let (done, total) = (state.refresh.done, state.refresh.total);
+        end_refresh(state);
+        effects.push_event(Event::Progress { done, total });
         return effects;
     }
 
@@ -744,6 +759,7 @@ fn done_due(
     };
     for due in wanted {
         state.fetching.insert(due.id);
+        state.refresh_counted.insert(due.id);
         // The feed on screen first, and everything the window explicitly
         // asked for; the rest of the list goes behind it so that a refresh
         // of forty-one feeds does not make the one being read wait.
@@ -772,6 +788,21 @@ fn done_due(
     effects
 }
 
+/// The refresh is over: the bar goes away, and the counters go back to
+/// nothing so the next one starts from zero rather than from what the last
+/// one left behind.
+///
+/// Called *after* the `n of n` event has been pushed, which is the event a
+/// window or a test watches for: the numbers are the news, and the state is
+/// what is true once the news has been read.
+fn end_refresh(state: &mut State) {
+    state.refresh.running = false;
+    state.refresh.current = None;
+    state.refresh.done = 0;
+    state.refresh.total = 0;
+    state.refresh_counted.clear();
+}
+
 fn in_scope(state: &State, scope: &RefreshScope, feed: FeedId) -> bool {
     match scope {
         RefreshScope::All => true,
@@ -793,15 +824,13 @@ fn cmd_cancel_refresh(state: &mut State) -> Effects {
     state.fetching.clear();
     state.extract_queue.clear();
     state.extract_inflight = 0;
-    state.refresh.running = false;
-    state.refresh.current = None;
+    end_refresh(state);
     Effects {
         jobs: Vec::new(),
         events: vec![
-            Event::Progress {
-                done: state.refresh.done,
-                total: state.refresh.total,
-            },
+            // Nothing of nothing: a cancelled refresh has no last number to
+            // leave on screen, and the bar is gone by the time this is read.
+            Event::Progress { done: 0, total: 0 },
             Event::Note(Note::info("refresh cancelled")),
         ],
     }
@@ -856,17 +885,14 @@ fn done_fetched(
 
     if counted {
         state.refresh.done += 1;
-        if state.refresh.done >= state.refresh.total && state.fetching.is_empty() {
-            state.refresh.running = false;
-            state.refresh.current = None;
+        let (done, total) = (state.refresh.done, state.refresh.total);
+        if done >= total && state.fetching.is_empty() {
+            end_refresh(state);
             effects.push_job(Job::Db(DbJob::LoadFeeds));
         } else {
             state.refresh.current = current_feed_name(state);
         }
-        effects.push_event(Event::Progress {
-            done: state.refresh.done,
-            total: state.refresh.total,
-        });
+        effects.push_event(Event::Progress { done, total });
     }
     effects
 }
@@ -984,6 +1010,7 @@ fn done_feed_added(
     let mut effects = Effects::job(Job::Db(DbJob::LoadFeeds));
     if is_new {
         state.fetching.insert(feed);
+        state.refresh_counted.insert(feed);
         effects.push_job(Job::Net(
             NetJob::Fetch {
                 feed,
@@ -1516,6 +1543,45 @@ mod tests {
         assert_eq!(s.refresh.total, 1);
     }
 
+    /// The bug this guards: `due` answers with the whole list every time it
+    /// is asked, so a second `Refresh(All)` landing while the first is still
+    /// running once added every feed to the total again -- `12 of 82` for
+    /// forty-one feeds. Run over the fixture, with the real `due`, the real
+    /// fetches and the real `apply`, because that is where the two answers
+    /// actually overlap.
+    #[test]
+    fn two_refreshes_over_one_another_still_count_each_feed_once() {
+        let cfg = WireConfig::default();
+        let (handle, mut driver) = crate::wire::testing::driver(&cfg);
+        driver.pump();
+        let feeds = handle.state().feeds.len();
+        assert!(feeds > 1, "the fixture has a list worth refreshing");
+
+        handle.send(Command::Refresh(RefreshScope::All));
+        handle.send(Command::Refresh(RefreshScope::All));
+        driver.pump();
+
+        let progress: Vec<(usize, usize)> = handle
+            .drain()
+            .filter_map(|e| match e {
+                Event::Progress { done, total } => Some((done, total)),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            progress.iter().all(|(_, total)| *total == feeds),
+            "the total is the feed count throughout, not twice it: {progress:?}"
+        );
+        assert!(
+            progress.contains(&(feeds, feeds)),
+            "the bar reaches {feeds} of {feeds}: {progress:?}"
+        );
+        let s = handle.state();
+        assert!(!s.refresh.running);
+        assert!(s.fetching.is_empty());
+        assert!(s.refresh_counted.is_empty(), "and the set is put away");
+    }
+
     #[test]
     fn a_folder_refresh_only_covers_that_folders_feeds() {
         let mut s = state();
@@ -1585,8 +1651,12 @@ mod tests {
                 generation: 0,
             }),
         );
-        assert_eq!(s.refresh.done, 1);
         assert!(!s.refresh.running, "the last feed in ends the refresh");
+        assert_eq!(
+            (s.refresh.done, s.refresh.total),
+            (0, 0),
+            "and the counters go back to nothing behind the `1 of 1` event"
+        );
         assert!(matches!(
             db_jobs(&effects).as_slice(),
             [DbJob::RecordUnchanged { .. }, DbJob::LoadFeeds]
