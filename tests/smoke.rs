@@ -382,6 +382,27 @@ fn extracting_one_page_prints_it_without_touching_the_database() {
     );
 }
 
+/// A page that answers 200 with a free sample. The probe says so rather than
+/// printing the sample, because the sample is what the feed already had.
+#[test]
+fn a_paywall_stub_is_reported_as_one_rather_than_printed() {
+    let home = home();
+    let replay = testdata("replay");
+    let output = command(home.path())
+        .args([
+            "--replay",
+            replay.to_str().unwrap(),
+            "extract",
+            "https://example.org/posts/paywalled",
+        ])
+        .output()
+        .expect("running starwire extract");
+    assert!(!output.status.success(), "{:?}", output.status);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("paywall"), "{stderr}");
+    assert!(output.stdout.is_empty(), "{:?}", output.stdout);
+}
+
 #[test]
 fn a_page_that_does_not_yield_says_why_and_exits_with_a_failure_code() {
     let home = home();

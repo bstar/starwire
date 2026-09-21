@@ -15,6 +15,9 @@
 //!    lines collapsed, relative links resolved, size capped at a paragraph
 //!    boundary.
 //!
+//! [`rules`] is the fourth thing, and it is a table rather than a stage: what
+//! this program knows about particular websites, in one file, as data.
+//!
 //! **What is not scraped, and why.** Not everything with a link is worth
 //! fetching, and fetching the wrong things is both rude and useless:
 //!
@@ -39,6 +42,7 @@
 pub mod markdown;
 pub mod normalise;
 pub mod readability;
+pub mod rules;
 
 use anyhow::Result;
 use url::Url;
@@ -236,6 +240,30 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
             final_url.as_str(),
             "the page reduced to nothing".to_string(),
         ));
+    }
+
+    // A wall that answered 200. Stored as the feed's own text with the
+    // reason beside it rather than as a success: five Bloomberg articles in
+    // the reference database are four hundred to nine hundred bytes of free
+    // sample each, and every one of them was counted as an article that had
+    // been extracted.
+    if rules::is_paywall_stub(&md, final_url.host_str().unwrap_or("")) {
+        return Ok(ArticleResult {
+            status: ArticleStatus::FeedContent,
+            title: extracted.title,
+            // None, so that `articles::put` keeps the text the entry already
+            // had. The feed's summary and the free sample are usually the
+            // same two paragraphs, and the summary does not pretend to be
+            // the article.
+            markdown: None,
+            byline: extracted.byline,
+            site_name: extracted.site_name,
+            image_url: extracted.image_url,
+            excerpt: extracted.excerpt,
+            source_url: Some(final_url.to_string()),
+            error: Some("paywall".to_string()),
+            retry_in_secs: None,
+        });
     }
 
     Ok(ArticleResult {
@@ -521,6 +549,33 @@ mod tests {
         assert!(!transport_is_transient(&NetError::Transport(
             "configured for https only: http://e.org/".into()
         )));
+    }
+
+    /// A page that answers 200 with two paragraphs and an invitation is not
+    /// a success. The reader keeps the feed's own text, and `paywall` is what
+    /// the banner says.
+    #[test]
+    fn a_paywall_stub_is_the_feeds_text_with_a_reason_rather_than_an_article() {
+        let http = Replay::open(&replay_dir()).unwrap();
+        let got = run(
+            &http,
+            "https://example.org/posts/paywalled",
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(got.status, ArticleStatus::FeedContent, "{:?}", got.error);
+        assert_eq!(got.error.as_deref(), Some("paywall"));
+        assert!(
+            got.markdown.is_none(),
+            "the stub was stored over the feed's text: {:?}",
+            got.markdown
+        );
+        // The metadata is still worth having: it is the real headline.
+        assert_eq!(
+            got.title.as_deref(),
+            Some("Something happened in a market today")
+        );
+        assert_eq!(got.retry_in_secs, None, "a wall is not a bad minute");
     }
 
     #[test]
