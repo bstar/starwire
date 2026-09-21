@@ -181,6 +181,30 @@ fn one_feeds_entries() {
     insta::assert_snapshot!("entries-mocha-60x21", render(&mut app, 60, 21));
 }
 
+/// The `/` filter in both of its states: kept on the feed list, where the
+/// crumb row says what narrowed it and the status row says how to stop, and
+/// the field still open over the entries.
+#[test]
+fn the_filter_on_a_list() {
+    let (mut app, mut fk) = build("terminal");
+    app.key(key('/'));
+    for c in "phoronix".chars() {
+        app.key(key(c));
+    }
+    app.key(code(KeyCode::Enter));
+    settle(&mut app, &mut fk);
+    insta::assert_snapshot!("sources-filtered", render(&mut app, 100, 30));
+
+    let (mut app, mut fk) = build("terminal");
+    into_hn(&mut app, &mut fk);
+    app.key(key('/'));
+    for c in "borrow".chars() {
+        app.key(key(c));
+    }
+    settle(&mut app, &mut fk);
+    insta::assert_snapshot!("entries-filter-open", render(&mut app, 100, 30));
+}
+
 /// The refresh badge and the status bar, stopped where no real run holds
 /// still: twelve of forty-one.
 #[test]
