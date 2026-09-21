@@ -6,6 +6,11 @@
 //! files instead, so the whole of fetching, parsing and extraction can be
 //! tested -- and demonstrated, with `starwire --replay` -- without a socket.
 //!
+//! **Redirects are followed here rather than by `ureq`.** A chain is a
+//! sequence of requests to a sequence of hosts, and the politeness in this
+//! file is per host: a loop that takes no lease reaches the second host at
+//! whatever rate the first one answered. See `MAX_REDIRECTS`.
+//!
 //! **https only.** The agent STAR/KIT builds refuses plaintext, and that is
 //! kept rather than relaxed. It costs one thing: `http://old.reddit.com` in a
 //! newsboat `urls` file does not work as typed. The answer is to rewrite
@@ -35,6 +40,11 @@ pub struct RequestOptions {
     /// than a truncation: half a feed is not a feed, and half a page extracts
     /// to nonsense.
     pub max_bytes: u64,
+    /// A timeout for this request alone, where it wants one longer or shorter
+    /// than the agent's. A page is not a feed: forty-one feeds want to be
+    /// quick about it, and one article behind a redirect wrapper on a site
+    /// that renders it on demand is allowed to take longer.
+    pub timeout_secs: Option<u64>,
 }
 
 impl RequestOptions {
@@ -65,6 +75,12 @@ impl RequestOptions {
     pub fn conditional(mut self, etag: Option<String>, last_modified: Option<String>) -> Self {
         self.etag = etag;
         self.last_modified = last_modified;
+        self
+    }
+
+    /// Give this one request its own timeout.
+    pub fn timeout(mut self, secs: u64) -> Self {
+        self.timeout_secs = Some(secs);
         self
     }
 }
@@ -115,6 +131,10 @@ pub enum NetError {
     NoReplay(String),
     #[error("{0}")]
     Transport(String),
+    #[error("it redirected to a login page at {0}")]
+    Wall(String),
+    #[error("more than {0} redirects")]
+    TooManyRedirects(usize),
 }
 
 /// The one way out.
@@ -132,6 +152,19 @@ pub trait Http: Send + Sync {
     }
 }
 
+/// How many hops a redirect chain may take.
+///
+/// `ureq` follows redirects itself and is told here not to. Its loop takes no
+/// lease, so a wrapper URL that redirects reaches the second host at whatever
+/// rate the first one answered -- which is exactly what the reference
+/// database recorded: seventeen 429s from `archive.is`, every one of them
+/// reached through a `feedpress.me` wrapper with no gap in between, and every
+/// one of them blamed on `feedpress.me` because that was the URL asked for.
+/// Walking the chain here buys three things: a lease per hop, the host that
+/// actually answered in `final_url`, and the chance to stop at a login page
+/// rather than to extract one.
+const MAX_REDIRECTS: usize = 5;
+
 /// The real thing: `ureq` on the agent STAR/KIT configures.
 pub struct Live {
     agent: ureq::Agent,
@@ -142,82 +175,175 @@ impl Live {
     pub fn new(cfg: &super::WireConfig) -> Self {
         let agent: ureq::Agent = starkit::net::builder(&cfg.user_agent())
             .https_only(true)
+            // Zero means ureq returns the 3xx as it is; `get` walks the chain
+            // itself. See MAX_REDIRECTS.
+            .max_redirects(0)
             .timeout_global(Some(Duration::from_secs(cfg.fetch.timeout_secs.max(1))))
             .build()
             .into();
         Self {
             agent,
-            politeness: Politeness::new(Duration::from_secs(cfg.fetch.min_host_interval_secs)),
+            politeness: Politeness::new(Duration::from_secs(cfg.fetch.min_host_interval_secs))
+                .with_host_intervals(
+                    cfg.fetch
+                        .host_intervals
+                        .iter()
+                        .map(|(host, secs)| (host.clone(), *secs)),
+                ),
         }
     }
 }
 
 impl Http for Live {
     fn get(&self, url: &Url, options: &RequestOptions) -> Result<Response, NetError> {
-        let _lease = self.politeness.lease(url.host_str().unwrap_or(""));
+        let mut target = url.clone();
 
-        let mut req = self.agent.get(url.as_str());
-        if let Some(accept) = &options.accept {
-            req = req.header("Accept", accept);
-        }
-        if let Some(etag) = &options.etag {
-            req = req.header("If-None-Match", etag);
-        }
-        if let Some(lm) = &options.last_modified {
-            req = req.header("If-Modified-Since", lm);
-        }
+        for _ in 0..=MAX_REDIRECTS {
+            // Held for the length of this hop and dropped before the next, so
+            // every host in a chain waits its own turn.
+            let lease = self.politeness.lease(target.host_str().unwrap_or(""));
 
-        let response = req.call().map_err(|e| NetError::Transport(e.to_string()))?;
-        let status = response.status().as_u16();
-        let header = |name: &str| {
-            response
-                .headers()
-                .get(name)
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_string)
-        };
-        let etag = header("etag");
-        let last_modified = header("last-modified");
-        let content_type = header("content-type");
-        let retry_after = header("retry-after").and_then(|v| v.trim().parse::<i64>().ok());
-        // `ureq`'s redirect handling leaves the final URI on the response
-        // extensions; where it is not there the request URL is the answer,
-        // which is the no-redirect case.
-        let final_url = {
-            use ureq::ResponseExt as _;
-            response.get_uri().to_string()
-        };
-
-        // A 304 has no body by definition, and asking for one on a connection
-        // the server has already finished with is how a read hangs.
-        let body = if status == 304 {
-            Vec::new()
-        } else {
-            let limit = options.max_bytes.max(1);
-            let body = response
-                .into_body()
-                .into_with_config()
-                // One byte over the limit, so that a body exactly at the
-                // limit is not mistaken for one that was cut short.
-                .limit(limit + 1)
-                .read_to_vec()
-                .map_err(|e| NetError::Transport(e.to_string()))?;
-            if body.len() as u64 > limit {
-                return Err(NetError::TooLarge(limit));
+            let mut req = self.agent.get(target.as_str());
+            if let Some(secs) = options.timeout_secs {
+                // Per request rather than per agent, because there is one
+                // agent and one connection pool for feeds and pages both.
+                req = req
+                    .config()
+                    .timeout_global(Some(Duration::from_secs(secs.max(1))))
+                    .build();
             }
-            body
-        };
+            if let Some(accept) = &options.accept {
+                req = req.header("Accept", accept);
+            }
+            if let Some(etag) = &options.etag {
+                req = req.header("If-None-Match", etag);
+            }
+            if let Some(lm) = &options.last_modified {
+                req = req.header("If-Modified-Since", lm);
+            }
 
-        Ok(Response {
-            status,
-            body,
-            etag,
-            last_modified,
-            content_type,
-            retry_after,
-            final_url,
-        })
+            let response = req.call().map_err(|e| NetError::Transport(e.to_string()))?;
+            let status = response.status().as_u16();
+            let header = |name: &str| {
+                response
+                    .headers()
+                    .get(name)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string)
+            };
+            let etag = header("etag");
+            let last_modified = header("last-modified");
+            let content_type = header("content-type");
+            let retry_after = header("retry-after").and_then(|v| v.trim().parse::<i64>().ok());
+            let location = header("location");
+
+            // What a server says about its own limiter, where it is one this
+            // believes. Reddit answers the first request of the minute with
+            // nothing left and forty seconds to wait.
+            let host = target.host_str().unwrap_or("").to_string();
+            if self.politeness.honours_ratelimit_reset(&host) {
+                if let Some(wait) =
+                    ratelimit_wait(header("x-ratelimit-remaining"), header("x-ratelimit-reset"))
+                {
+                    self.politeness.hold(&host, wait);
+                }
+            }
+
+            if let (true, Some(location)) = (is_redirect(status), location.as_deref()) {
+                let next = target
+                    .join(location.trim())
+                    .map_err(|e| NetError::Transport(format!("{location}: {e}")))?;
+                if is_a_wall(&next) {
+                    return Err(NetError::Wall(next.to_string()));
+                }
+                // The body of a redirect is a courtesy page nobody reads, and
+                // the connection is wanted back.
+                drop(response);
+                drop(lease);
+                target = next;
+                continue;
+            }
+
+            // A 304 has no body by definition, and asking for one on a
+            // connection the server has already finished with is how a read
+            // hangs.
+            let body = if status == 304 {
+                Vec::new()
+            } else {
+                let limit = options.max_bytes.max(1);
+                let body = response
+                    .into_body()
+                    .into_with_config()
+                    // One byte over the limit, so that a body exactly at the
+                    // limit is not mistaken for one that was cut short.
+                    .limit(limit + 1)
+                    .read_to_vec()
+                    .map_err(|e| NetError::Transport(e.to_string()))?;
+                if body.len() as u64 > limit {
+                    return Err(NetError::TooLarge(limit));
+                }
+                body
+            };
+
+            return Ok(Response {
+                status,
+                body,
+                etag,
+                last_modified,
+                content_type,
+                retry_after,
+                final_url: target.to_string(),
+            });
+        }
+
+        Err(NetError::TooManyRedirects(MAX_REDIRECTS))
     }
+}
+
+/// How long a server's own rate-limit headers ask for, where they ask for
+/// anything.
+///
+/// Reddit sends `x-ratelimit-remaining` as a float (`0.0`) and
+/// `x-ratelimit-reset` as whole seconds. Nothing is asked of a header that
+/// does not parse: a limiter this does not understand is one to leave to the
+/// ordinary gap.
+fn ratelimit_wait(remaining: Option<String>, reset: Option<String>) -> Option<Duration> {
+    let remaining: f64 = remaining?.trim().parse().ok()?;
+    if remaining >= 1.0 {
+        return None;
+    }
+    let reset: u64 = reset?.trim().parse().ok()?;
+    // A limiter asking for an hour is a limiter this program has
+    // misunderstood; the ordinary backoff is what that case is for.
+    (reset > 0 && reset <= 300).then(|| Duration::from_secs(reset))
+}
+
+/// The status codes that mean "it is somewhere else".
+fn is_redirect(status: u16) -> bool {
+    matches!(status, 301 | 302 | 303 | 307 | 308)
+}
+
+/// Whether a redirect has landed somewhere there is no article behind.
+///
+/// Worth stopping at rather than following: `old.reddit.com/r/<sub>/.rss`
+/// answers a 302 to `/login/?reason=lor2`, and what the program recorded
+/// against all five Reddit feeds was "not a feed (HTML page)" -- true, and
+/// two steps removed from what happened. The list is deliberately short and
+/// matches whole path segments, so an article at `/2026/09/logins-considered`
+/// is untouched.
+fn is_a_wall(url: &Url) -> bool {
+    const SEGMENTS: &[&str] = &[
+        "login",
+        "signin",
+        "sign-in",
+        "sign_in",
+        "consent",
+        "captcha",
+        "checkpoint",
+    ];
+    url.path_segments().is_some_and(|mut segments| {
+        segments.any(|segment| SEGMENTS.contains(&segment.to_ascii_lowercase().as_str()))
+    })
 }
 
 /// A directory of saved responses, served instead of the network.
@@ -314,6 +440,54 @@ impl Http for Replay {
     }
 }
 
+/// A host that has said, by how it behaves, that the default gap is not
+/// enough.
+///
+/// Data rather than code, and short on purpose: a table of special cases is
+/// a table of things measured, and anything speculative in it is a slower
+/// reader for no reason.
+#[derive(Debug, Clone, Copy)]
+pub struct HostRule {
+    /// Matched against the whole host or against a dot-prefixed tail of it,
+    /// so `reddit.com` covers `www.reddit.com` and `old.reddit.com` and does
+    /// not cover `notreddit.com`.
+    pub host_suffix: &'static str,
+    pub min_interval: Duration,
+    /// Whether to read `x-ratelimit-remaining` and `x-ratelimit-reset` off
+    /// the answer and hold the host until the reset when nothing is left.
+    /// Only for servers known to send them honestly.
+    pub honour_ratelimit_reset: bool,
+}
+
+/// The hosts a feed list of any size will meet, and what they want.
+///
+/// **Reddit**, probed live in September 2026: `www.reddit.com/r/<sub>/.rss`
+/// serves Atom to this program's user agent -- a browser's gets a 429 -- and
+/// answers the very first request with `x-ratelimit-remaining: 0.0` and
+/// `x-ratelimit-reset: 40`. That is roughly one request a minute per address,
+/// for all five subreddits together, so sixty-one seconds is the gap and the
+/// reset header is believed on top of it.
+///
+/// **archive.is** is what `feedpress.me` wrappers redirect to, seventeen
+/// times in one afternoon in the reference database, every one of them a 429.
+const HOST_RULES: &[HostRule] = &[
+    HostRule {
+        host_suffix: "reddit.com",
+        min_interval: Duration::from_secs(61),
+        honour_ratelimit_reset: true,
+    },
+    HostRule {
+        host_suffix: "archive.is",
+        min_interval: Duration::from_secs(10),
+        honour_ratelimit_reset: false,
+    },
+];
+
+/// Whether a host is the one a rule or a configured override names.
+fn host_matches(host: &str, suffix: &str) -> bool {
+    host == suffix || host.ends_with(&format!(".{suffix}"))
+}
+
 /// One request to one host at a time, with a gap between them.
 ///
 /// Two separate guarantees, and both matter. **Serial per host** is what
@@ -328,6 +502,10 @@ impl Http for Replay {
 /// the same host waits on the mutex until the first has its answer.
 pub struct Politeness {
     min_interval: Duration,
+    /// What `[fetch] host_intervals` said, matched the same way the built-in
+    /// rules are and winning over them: a reader who has been asked by an
+    /// administrator to slow down should not have to wait for a release.
+    overrides: HashMap<String, Duration>,
     hosts: Mutex<HashMap<String, Arc<HostSlot>>>,
 }
 
@@ -346,36 +524,105 @@ struct HostSlot {
 struct HostState {
     busy: bool,
     last: Instant,
+    /// Set from a server's own rate-limit headers, and never moved backwards.
+    /// Reddit says `x-ratelimit-reset: 40` after one request; waiting the
+    /// forty seconds is the difference between being rate limited and being
+    /// blocked.
+    not_before: Option<Instant>,
 }
 
 impl Politeness {
     pub fn new(min_interval: Duration) -> Self {
         Self {
             min_interval,
+            overrides: HashMap::new(),
             hosts: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The reader's own table of gaps, from `[fetch] host_intervals`.
+    pub fn with_host_intervals<I>(mut self, intervals: I) -> Self
+    where
+        I: IntoIterator<Item = (String, u64)>,
+    {
+        self.overrides = intervals
+            .into_iter()
+            .map(|(host, secs)| (host.trim().to_ascii_lowercase(), Duration::from_secs(secs)))
+            .filter(|(host, _)| !host.is_empty())
+            .collect();
+        self
+    }
+
+    /// The gap this host wants: what the reader configured, else what the
+    /// table above knows, else the default. The longest matching suffix wins,
+    /// so a rule for one subdomain beats a rule for its parent.
+    pub fn interval_for(&self, host: &str) -> Duration {
+        let host = host.to_ascii_lowercase();
+        let configured = self
+            .overrides
+            .iter()
+            .filter(|(suffix, _)| host_matches(&host, suffix))
+            .max_by_key(|(suffix, _)| suffix.len())
+            .map(|(_, interval)| *interval);
+        configured
+            .or_else(|| {
+                HOST_RULES
+                    .iter()
+                    .filter(|rule| host_matches(&host, rule.host_suffix))
+                    .max_by_key(|rule| rule.host_suffix.len())
+                    .map(|rule| rule.min_interval)
+            })
+            .unwrap_or(self.min_interval)
+    }
+
+    /// Whether this host's rate-limit headers are worth believing.
+    pub fn honours_ratelimit_reset(&self, host: &str) -> bool {
+        let host = host.to_ascii_lowercase();
+        HOST_RULES
+            .iter()
+            .filter(|rule| host_matches(&host, rule.host_suffix))
+            .max_by_key(|rule| rule.host_suffix.len())
+            .is_some_and(|rule| rule.honour_ratelimit_reset)
+    }
+
+    /// Do not ask this host anything for `wait`.
+    ///
+    /// Additive with the gap rather than instead of it, and never shortened:
+    /// two threads reading two answers from one rate limiter must not talk
+    /// each other into asking sooner.
+    pub fn hold(&self, host: &str, wait: Duration) {
+        let slot = self.slot(host);
+        let until = Instant::now() + wait;
+        let mut state = slot.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.not_before.is_none_or(|current| until > current) {
+            state.not_before = Some(until);
+        }
+    }
+
+    fn slot(&self, host: &str) -> Arc<HostSlot> {
+        let mut hosts = self.hosts.lock().unwrap_or_else(|e| e.into_inner());
+        Arc::clone(hosts.entry(host.to_ascii_lowercase()).or_insert_with(|| {
+            Arc::new(HostSlot {
+                state: Mutex::new(HostState {
+                    busy: false,
+                    // Long enough ago that the first request to a host
+                    // never waits.
+                    last: Instant::now() - Duration::from_secs(3600),
+                    not_before: None,
+                }),
+                free: std::sync::Condvar::new(),
+            })
+        }))
     }
 
     /// Take the lease for `host`, waiting for whoever has it and then for the
     /// gap since their request to pass. Dropping the returned guard stamps
     /// the clock and lets the next thread in.
     pub fn lease(&self, host: &str) -> HostLease {
-        let slot = {
-            let mut hosts = self.hosts.lock().unwrap_or_else(|e| e.into_inner());
-            Arc::clone(hosts.entry(host.to_ascii_lowercase()).or_insert_with(|| {
-                Arc::new(HostSlot {
-                    state: Mutex::new(HostState {
-                        busy: false,
-                        // Long enough ago that the first request to a host
-                        // never waits.
-                        last: Instant::now() - Duration::from_secs(3600),
-                    }),
-                    free: std::sync::Condvar::new(),
-                })
-            }))
-        };
+        let slot = self.slot(host);
+        let interval = self.interval_for(host);
 
-        let elapsed = {
+        let (elapsed, not_before) = {
             // Poisoning is tolerated throughout: a panic in the middle of one
             // request must not make a host unfetchable for the rest of the
             // session.
@@ -384,10 +631,14 @@ impl Politeness {
                 state = slot.free.wait(state).unwrap_or_else(|e| e.into_inner());
             }
             state.busy = true;
-            state.last.elapsed()
+            (state.last.elapsed(), state.not_before)
         };
-        if elapsed < self.min_interval {
-            std::thread::sleep(self.min_interval - elapsed);
+        let mut wait = interval.saturating_sub(elapsed);
+        if let Some(until) = not_before {
+            wait = wait.max(until.saturating_duration_since(Instant::now()));
+        }
+        if !wait.is_zero() {
+            std::thread::sleep(wait);
         }
         HostLease { slot }
     }
@@ -494,6 +745,11 @@ mod tests {
         assert_eq!(feed.max_bytes, 1024);
         let page = RequestOptions::page(2048);
         assert!(page.accept.as_deref().unwrap().starts_with("text/html"));
+        assert_eq!(
+            page.timeout_secs, None,
+            "the agent's own timeout, unless asked"
+        );
+        assert_eq!(page.timeout(30).timeout_secs, Some(30));
 
         let conditional = RequestOptions::feed(1).conditional(Some("\"e\"".into()), None);
         assert_eq!(conditional.etag.as_deref(), Some("\"e\""));
@@ -554,6 +810,134 @@ mod tests {
         let started = Instant::now();
         drop(politeness.lease("example.org"));
         assert!(started.elapsed() >= Duration::from_millis(30));
+    }
+
+    #[test]
+    fn the_status_codes_that_mean_somewhere_else_are_the_five_that_do() {
+        for status in [301, 302, 303, 307, 308] {
+            assert!(is_redirect(status), "{status}");
+        }
+        for status in [200, 204, 304, 400, 403, 429, 500] {
+            assert!(!is_redirect(status), "{status}");
+        }
+    }
+
+    #[test]
+    fn a_redirect_into_a_login_page_is_recognised_and_an_article_is_not() {
+        // What `old.reddit.com/r/<sub>/.rss` answers with, which is what the
+        // reference database recorded as "not a feed (HTML page)".
+        assert!(is_a_wall(
+            &Url::parse("https://old.reddit.com/login/?reason=lor2").unwrap()
+        ));
+        assert!(is_a_wall(
+            &Url::parse("https://e.org/accounts/sign-in?next=/a").unwrap()
+        ));
+        assert!(is_a_wall(&Url::parse("https://e.org/consent/").unwrap()));
+
+        // Whole segments, so an article that talks about one is untouched.
+        assert!(!is_a_wall(
+            &Url::parse("https://e.org/2026/09/logins-considered-harmful").unwrap()
+        ));
+        assert!(!is_a_wall(
+            &Url::parse("https://e.org/posts/one?from=login").unwrap()
+        ));
+        assert!(!is_a_wall(&Url::parse("https://e.org/").unwrap()));
+    }
+
+    #[test]
+    fn the_hosts_with_a_rule_get_their_own_gap_and_everything_else_the_default() {
+        let politeness = Politeness::new(Duration::from_secs(2));
+        assert_eq!(
+            politeness.interval_for("www.reddit.com"),
+            Duration::from_secs(61)
+        );
+        assert_eq!(
+            politeness.interval_for("old.reddit.com"),
+            Duration::from_secs(61),
+            "a rule is a tail of the host, not the whole of it"
+        );
+        assert_eq!(
+            politeness.interval_for("archive.is"),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            politeness.interval_for("example.org"),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            politeness.interval_for("notreddit.com"),
+            Duration::from_secs(2),
+            "a suffix has to start at a dot"
+        );
+    }
+
+    #[test]
+    fn a_configured_gap_beats_the_table_and_the_longest_match_wins() {
+        let politeness = Politeness::new(Duration::from_secs(2)).with_host_intervals([
+            ("reddit.com".to_string(), 5),
+            ("OLD.reddit.com".to_string(), 90),
+            ("example.org".to_string(), 30),
+            ("  ".to_string(), 7),
+        ]);
+        assert_eq!(
+            politeness.interval_for("www.reddit.com"),
+            Duration::from_secs(5),
+            "the reader's own number wins over the built-in one"
+        );
+        assert_eq!(
+            politeness.interval_for("old.reddit.com"),
+            Duration::from_secs(90)
+        );
+        assert_eq!(
+            politeness.interval_for("example.org"),
+            Duration::from_secs(30)
+        );
+        assert_eq!(politeness.interval_for("e.example"), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn only_the_hosts_that_send_honest_rate_limit_headers_are_believed() {
+        let politeness = Politeness::new(Duration::from_secs(2));
+        assert!(politeness.honours_ratelimit_reset("www.reddit.com"));
+        assert!(!politeness.honours_ratelimit_reset("archive.is"));
+        assert!(!politeness.honours_ratelimit_reset("example.org"));
+    }
+
+    #[test]
+    fn a_servers_own_limiter_is_read_only_when_it_says_there_is_nothing_left() {
+        // Reddit's answer to the first request of the minute.
+        assert_eq!(
+            ratelimit_wait(Some("0.0".into()), Some("40".into())),
+            Some(Duration::from_secs(40))
+        );
+        assert_eq!(ratelimit_wait(Some("98.0".into()), Some("40".into())), None);
+        assert_eq!(ratelimit_wait(None, Some("40".into())), None);
+        assert_eq!(ratelimit_wait(Some("0.0".into()), None), None);
+        assert_eq!(ratelimit_wait(Some("0.0".into()), Some("0".into())), None);
+        assert_eq!(
+            ratelimit_wait(Some("0.0".into()), Some("86400".into())),
+            None,
+            "an hour is a header this has misunderstood"
+        );
+        assert_eq!(
+            ratelimit_wait(Some("nonsense".into()), Some("4".into())),
+            None
+        );
+    }
+
+    #[test]
+    fn a_host_held_by_its_own_limiter_waits_that_long_and_not_less() {
+        let politeness = Politeness::new(Duration::from_millis(1));
+        politeness.hold("example.org", Duration::from_millis(60));
+        // A shorter hold does not talk the longer one down.
+        politeness.hold("example.org", Duration::from_millis(1));
+        let started = Instant::now();
+        drop(politeness.lease("example.org"));
+        assert!(
+            started.elapsed() >= Duration::from_millis(40),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

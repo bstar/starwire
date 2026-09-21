@@ -23,7 +23,7 @@
 
 /// Bumped when the DDL below changes in a way an existing file needs helping
 /// across. `db::migrate` is where that help goes.
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// The same set STAR/AMP opens its index with, for the same reasons.
 ///
@@ -87,6 +87,11 @@ CREATE TABLE IF NOT EXISTS entry (
   -- and the reason read state survives a feed with no ids.
   guid          TEXT NOT NULL,
   url           TEXT,
+  -- Where that link actually led, once something followed it. Ten entries in
+  -- the reference database are one article behind two `feedpress.me`
+  -- wrappers; the wrapper is what the feed carried and this is what tells
+  -- them apart from two articles.
+  final_url     TEXT,
   title         TEXT NOT NULL DEFAULT '',
   author        TEXT,
   kind          INTEGER NOT NULL DEFAULT 0,  -- 0 article, 1 video, 2 post
@@ -129,9 +134,19 @@ CREATE TABLE IF NOT EXISTS article (
   source_url   TEXT,
   extracted_at INTEGER,
   attempts     INTEGER NOT NULL DEFAULT 0,
-  error        TEXT
+  error        TEXT,
+  -- When a failure is worth another attempt, and NULL when it is not. A 429,
+  -- a 5xx and a timeout are facts about today; a 401, a 403 and a page that
+  -- does not read like an article are facts about the page.
+  retry_after  INTEGER
 );
 CREATE INDEX IF NOT EXISTS article_pending_idx ON article(status) WHERE status = 0;
+-- There is deliberately no index on `retry_after`, which the other half of
+-- the extraction queue reads. Two reasons, and the second is the one to
+-- remember: the failed rows are a twentieth of a table measured in thousands,
+-- and this batch runs *before* `migrate`, so an index over a column a
+-- migration adds cannot live here at all -- on a file from the previous
+-- version the column is not there yet when these statements run.
 
 -- External-content FTS5: the index holds the tokens and the `article` table
 -- holds the text, rather than a second copy of every article in the file.

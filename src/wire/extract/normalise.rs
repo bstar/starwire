@@ -140,7 +140,11 @@ pub fn normalise(markdown: &str, base: Option<&Url>, options: Options) -> String
     if !options.images {
         out = drop_images(&out);
     }
-    truncate_at_paragraph(&out, options.max_bytes)
+    let mut out = truncate_at_paragraph(&out, options.max_bytes);
+    // The cut can land just after a hard break, which then breaks nothing and
+    // would otherwise be a lone backslash at the end of the article.
+    undangle(&mut out);
+    out
 }
 
 /// Collapse trailing whitespace and runs of blank lines.
@@ -148,29 +152,66 @@ pub fn normalise(markdown: &str, base: Option<&Url>, options: Options) -> String
 /// `htmd` leaves three or four blank lines wherever the page had nested
 /// `<div>`s around a paragraph, which in a terminal at eighty columns is
 /// half a screen of nothing.
+///
+/// Trailing whitespace has to go -- a page indented with spaces is otherwise
+/// half a screen of them -- and that is exactly why the converter is
+/// configured to spell a hard break as a trailing backslash rather than as
+/// two trailing spaces: this function would eat the spaces, and did, in every
+/// article in the reference database. A backslash at the end of a *paragraph*
+/// breaks nothing and is taken off, because a stray backslash on screen looks
+/// like a bug in the extractor.
 fn collapse(markdown: &str) -> String {
-    let mut out = String::with_capacity(markdown.len());
+    let mut lines: Vec<String> = Vec::new();
     let mut blank_run = 0usize;
     let mut in_code = false;
     for line in markdown.lines() {
-        let trimmed = line.trim_end();
+        let mut trimmed = line.trim_end();
         // Inside a fenced block every line is the author's, blank ones
         // included: collapsing them would change what the code means.
         if trimmed.trim_start().starts_with("```") {
             in_code = !in_code;
+        }
+        // A line that is nothing but a hard break has nothing to break, and
+        // on screen it is a lone backslash where a blank line should be. A
+        // run of `<br>` tags is how half the feeds in a real list spell a
+        // paragraph, so this is not a rare shape.
+        if !in_code && !trimmed.trim().is_empty() && trimmed.trim().bytes().all(|b| b == b'\\') {
+            trimmed = "";
         }
         if !in_code && trimmed.trim().is_empty() {
             blank_run += 1;
             if blank_run > 1 {
                 continue;
             }
+            if let Some(last) = lines.last_mut() {
+                undangle(last);
+            }
         } else {
             blank_run = 0;
         }
-        out.push_str(trimmed);
-        out.push('\n');
+        lines.push(trimmed.to_string());
     }
+    if !in_code {
+        if let Some(last) = lines.last_mut() {
+            undangle(last);
+        }
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
     out.trim_start_matches('\n').trim_end().to_string()
+}
+
+/// Take a hard break off the end of a paragraph, where it breaks nothing.
+///
+/// One backslash only: two is an escaped backslash, which is a character the
+/// author wrote.
+fn undangle(line: &mut String) {
+    if line.ends_with('\\') && !line.ends_with("\\\\") {
+        line.pop();
+        while line.ends_with(' ') || line.ends_with('\t') {
+            line.pop();
+        }
+    }
 }
 
 /// Make every link and image target absolute against the page.
@@ -360,6 +401,29 @@ mod tests {
     fn runs_of_blank_lines_become_one() {
         let got = collapse("A\n\n\n\n\nB\n\n\n");
         assert_eq!(got, "A\n\nB");
+    }
+
+    #[test]
+    fn a_hard_break_survives_and_a_dangling_one_does_not() {
+        // The converter spells a break as a trailing backslash precisely so
+        // that trimming trailing whitespace cannot eat it.
+        let got = collapse("First\\\nsecond\n\nA paragraph.\\\n\n\nAnd another.\\");
+        assert!(got.contains("First\\\nsecond"), "{got:?}");
+        assert!(
+            !got.contains("A paragraph.\\"),
+            "a break at the end of a paragraph breaks nothing: {got:?}"
+        );
+        assert!(!got.ends_with('\\'), "{got:?}");
+
+        // Two backslashes are an escaped backslash, which the author wrote.
+        let got = collapse("Ends in a backslash: \\\\\n\nAfter.");
+        assert!(got.contains("backslash: \\\\"), "{got:?}");
+
+        // A run of `<br>` tags, which is how half the feeds in a real list
+        // spell a paragraph break: three breaks in a row become one blank
+        // line rather than three lone backslashes.
+        let got = collapse("**A headline** \\\n\\\n\\\n\\\nThe story.");
+        assert_eq!(got, "**A headline**\n\nThe story.", "{got:?}");
     }
 
     #[test]

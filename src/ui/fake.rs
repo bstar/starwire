@@ -238,6 +238,7 @@ fn seeded() -> Db {
             excerpt: None,
             source_url: Some("https://example.org/posts/borrow-checker".into()),
             error: None,
+            retry_in_secs: None,
         },
     )
     .expect("storing the fixture article");
@@ -264,6 +265,7 @@ fn seeded() -> Db {
             excerpt: None,
             source_url: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".into()),
             error: None,
+            retry_in_secs: None,
         },
     )
     .expect("a video description");
@@ -337,6 +339,7 @@ fn pending() -> ArticleResult {
         excerpt: None,
         source_url: None,
         error: None,
+        retry_in_secs: None,
     }
 }
 

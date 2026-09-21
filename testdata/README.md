@@ -18,8 +18,8 @@ website, and none of it is anybody's data:
 
 | Directory | What it holds |
 | --- | --- |
-| `feeds/` | One file per feed format the reader has to read: Atom, RSS 2.0, JSON Feed, a YouTube channel feed, the same through the scriptbarrel proxy, two shapes of `hnrss`, a subreddit, and one deliberately broken document. |
-| `pages/` | Pages for the extractor: one shaped like an article, one with nothing in it that reads like one, and two YouTube pages that carry a channel id. |
+| `feeds/` | One file per feed format the reader has to read: Atom, RSS 2.0, JSON Feed, a YouTube channel feed, the same through the scriptbarrel proxy, two shapes of `hnrss`, a subreddit as `www.reddit.com` serves it, and one deliberately broken document. |
+| `pages/` | Pages for the extractor: one shaped like an article, one with nothing in it that reads like one, a short news item of the length the gate used to refuse, a page that keeps its article only in JSON-LD, a page that answers with a free sample and an invitation, a page whose four pictures are all loaded by a script, two pages of one review that the follower puts back together, and two YouTube pages that carry a channel id. |
 | `import/` | A newsboat `urls` file, an OPML export, a Google Takeout `subscriptions.csv`, and `yt-dlp` output for `:ytsubs`. |
 | `replay/` | `index.tsv` maps a URL to one of the files above; `feeds.tsv` is the feed list `--replay` seeds an empty database with. |
 

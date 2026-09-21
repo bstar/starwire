@@ -35,9 +35,13 @@ A few errors mean particular things:
 - **`401` / `403`** — it needs credentials, or it refuses this reader.
   STAR/WIRE sends no credentials and has no way to.
 - **`429`** — too many requests. Raise `[fetch] min_host_interval_secs`, or
-  lower `[fetch] refresh_minutes`. Reddit is the usual source of these.
+  add a line for that host to `[fetch] host_intervals`, or lower
+  `[fetch] refresh_minutes`.
 - **`not a feed (HTML page; the site may be rate limiting)`** — a 200, but
-  what came back was a web page. See Reddit, below.
+  what came back was a web page. Often a login page a redirect led to; see
+  Reddit, below.
+- **`it redirected to a login page at …`** — the address is not public any
+  more, or not public to a reader without an account.
 - **`the body is not a feed`** — what came back parsed as neither RSS, Atom
   nor JSON Feed, and did not look like a web page either.
 - **`this reads feeds over https, not http`** — the address could not be
@@ -46,28 +50,41 @@ A few errors mean particular things:
 
 ## Reddit
 
-Reddit rate limits a feed reader hard, and it does not always say so with a
-`429`. Asked too often, `old.reddit.com/r/<sub>/.rss` answers **200 with an
-HTML page** — its own "take a break" page — rather than the feed. STAR/WIRE
-recognises that and records it as `not a feed (HTML page; the site may be
-rate limiting)`, which is worth telling apart from a broken feed: the feed is
-fine, and the answer is to ask less often.
+Two things, and the first was diagnosed as the second for a while.
 
-- Raise `[fetch] min_host_interval_secs`. Every `old.reddit.com` feed shares
-  one host, so five subreddits at a two-second gap are five requests in ten
-  seconds.
-- Raise `[fetch] refresh_minutes`.
-- Leave it alone for a while. The failure earns the ordinary backoff, which
-  doubles to a ceiling of a day, so a rate-limited feed already slows itself
-  down.
+**`old.reddit.com` no longer serves feeds.** As of September 2026 it answers
+`/r/<sub>/.rss` with a redirect to its login page, and the login page is the
+HTML that arrives where a feed should be. STAR/WIRE now asks
+`www.reddit.com/r/<sub>/.rss` instead, rewrites the old host to the new one on
+the way in, and moves the feeds already in the database across the first time
+0.0.2 opens it. There is nothing to do; if you have a feed subscribed to under
+both spellings, both are kept and one of them can go.
+
+**Reddit rate limits a feed reader hard.** Measured: with STAR/WIRE's own user
+agent it serves the feed, and then says `x-ratelimit-remaining: 0.0` and
+`x-ratelimit-reset: 40` after a single request. A browser's user agent gets a
+`429` outright. That works out at roughly one request a minute for the whole
+of `reddit.com`, however many subreddits you follow.
+
+So `reddit.com` has a built-in gap of sixty-one seconds, and the reset header
+is waited out on top of it. Five subreddit feeds therefore take about five
+minutes to come round, which they do in the background. Nothing needs
+configuring. If Reddit tightens further, `[fetch] host_intervals` is where to
+say so:
+
+```toml
+[fetch.host_intervals]
+"reddit.com" = 120
+```
 
 Reddit posts are never scraped in any case — the feed carries the body, and
 the link goes to a comment thread. [Reading](reading.md) says why.
 
 ## An article shows only the feed's two sentences
 
-The page did not yield. Find out why on that one page, without touching
-anything:
+The page did not yield, and the line above the text says why. That the feed's
+text is there at all is the point: an entry is readable whatever its page did.
+Find out why on that one page, without touching anything:
 
 ```sh
 starwire extract <the entry's url>
@@ -77,8 +94,20 @@ It prints the markdown, or exits 1 with the reason. The usual reasons are a
 paywall, a login wall, a page that is mostly JavaScript, or a link that goes
 to a homepage rather than to an article.
 
-An entry is tried at most three times ever. `e` in the reader forces another
-attempt.
+`paywall` in particular means the page answered normally and gave a sample:
+the first paragraph or two above the wall, which is usually the same text the
+feed carried and is stored as the feed's rather than as an article.
+
+A `429`, a `5xx` or a timeout comes round again by itself, after
+`[fetch] refresh_minutes` and doubling from there. The rest stay as they are.
+Either way an entry is tried at most three times ever, and `e` in the reader
+forces another attempt now.
+
+Upgrading to 0.0.2 marks the ones already in your database due as well —
+0.0.1 had no way to tell a bad minute from a paywall and recorded every
+failure as final — so the first refresh after the upgrade tries those again
+too. In the reference database that was twenty-four entries out of
+ninety-three.
 
 Some entries are never extracted on purpose: videos, Reddit posts, and Hacker
 News items that link back into the comment thread. [Reading](reading.md) says

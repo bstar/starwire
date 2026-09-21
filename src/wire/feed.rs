@@ -8,6 +8,7 @@
 //! between two different crates' idea of an instant.
 
 use jiff::Timestamp;
+use url::Url;
 
 /// A row id in `feed`.
 ///
@@ -163,10 +164,13 @@ impl ArticleStatus {
         self as i64
     }
 
-    /// Whether another attempt would be worth making. Only `Pending` is; a
-    /// `Failed` row is retried on request (`e` in the reader,
-    /// `Command::Extract`) rather than on every refresh, because the usual
-    /// reason is a paywall and retrying it hourly helps nobody.
+    /// Whether another attempt is due without anybody asking for one.
+    ///
+    /// Only `Pending`. A `Failed` row comes back only when its reason was
+    /// transient -- a 429, a 5xx or a timeout, which `article.retry_after`
+    /// records and `db::articles::pending` reads -- or when somebody asks
+    /// with `e` in the reader. The usual reason is a paywall, and retrying a
+    /// paywall hourly helps nobody.
     pub fn is_pending(self) -> bool {
         matches!(self, Self::Pending)
     }
@@ -254,6 +258,15 @@ pub struct ArticleView {
     pub markdown: std::sync::Arc<str>,
     pub status: ArticleStatus,
     pub image_url: Option<String>,
+    /// Why the page did not yield, where it did not.
+    ///
+    /// **It is set beside kept text, not instead of it.** Since 0.0.2 every
+    /// article row carries the feed's own text from the moment the entry is
+    /// stored, so a [`ArticleStatus::Failed`] view has `markdown` *and*
+    /// `error`: the reader draws the text and puts the reason above it rather
+    /// than drawing a reason where an article should be. `paywall` beside
+    /// [`ArticleStatus::FeedContent`] is the same shape -- the page was
+    /// fetched, what came back was a stub, and the feed's text is better.
     pub error: Option<String>,
     /// When the text was last written. The reader's cache keys on this: it is
     /// what changes when an extraction lands behind an already-open entry.
@@ -330,6 +343,38 @@ fn to_timestamp(secs: i64, nanos: u32) -> Option<Timestamp> {
 /// Everything dropped here is dropped on purpose: categories, contributors,
 /// the feed's own rights statement and its generator are all things a reader
 /// would have to be asked about before showing, and nobody has asked.
+/// Hosts this program knows a better name for, and the better name.
+///
+/// **`old.reddit.com` is the whole of the table.** It served subreddit feeds
+/// for years and is what a newsboat `urls` file written any time before this
+/// year says; as of September 2026 it answers `/r/<sub>/.rss` with a 302 to
+/// `/login/?reason=lor2`, and what all five Reddit feeds in the reference
+/// database had recorded against them was the login page arriving where a
+/// feed should be. `www.reddit.com/r/<sub>/.rss` serves the same Atom to this
+/// program's user agent.
+///
+/// The original spelling is kept as the feed's `source_url`, which is what
+/// makes a second import of the same `urls` file recognise what it added.
+const HOST_REWRITES: &[(&str, &str)] = &[("old.reddit.com", "www.reddit.com")];
+
+/// The canonicalisation every feed URL gets that is not YouTube's.
+///
+/// Called from [`crate::wire::youtube::canonicalise`], which is the one door
+/// every URL entering this program comes through -- a typed address, an
+/// imported line, an OPML outline. Keeping it here rather than there is what
+/// stops the YouTube module growing an opinion about Reddit.
+pub fn canonical_url(url: &mut Url) {
+    let Some(host) = url.host_str() else {
+        return;
+    };
+    let host = host.to_ascii_lowercase();
+    if let Some((_, better)) = HOST_REWRITES.iter().find(|(from, _)| *from == host) {
+        // Infallible for a host that parsed once: `set_host` only refuses a
+        // name that is not one.
+        let _ = url.set_host(Some(better));
+    }
+}
+
 pub fn from_parsed(parsed: feed_rs::model::Feed) -> ParsedFeed {
     let site_url = parsed
         .links
@@ -479,6 +524,37 @@ pub fn truncate_on_char_boundary(s: &mut String, max: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_reddit_becomes_www_reddit_and_nothing_else_moves() {
+        let rewritten = |raw: &str| {
+            let mut url = Url::parse(raw).unwrap();
+            canonical_url(&mut url);
+            url.to_string()
+        };
+        assert_eq!(
+            rewritten("https://old.reddit.com/r/rust/.rss"),
+            "https://www.reddit.com/r/rust/.rss"
+        );
+        assert_eq!(
+            rewritten("https://OLD.REDDIT.COM/r/rust/.rss"),
+            "https://www.reddit.com/r/rust/.rss"
+        );
+        // The path, the query and the fragment are untouched: this is a host
+        // rewrite and a feed URL is a key.
+        assert_eq!(
+            rewritten("https://old.reddit.com/r/rust/top/.rss?t=week"),
+            "https://www.reddit.com/r/rust/top/.rss?t=week"
+        );
+        for left_alone in [
+            "https://www.reddit.com/r/rust/.rss",
+            "https://reddit.com/r/rust/.rss",
+            "https://notold.reddit.com/r/rust/.rss",
+            "https://example.org/feed.xml",
+        ] {
+            assert_eq!(rewritten(left_alone), left_alone);
+        }
+    }
 
     fn parse(xml: &str) -> ParsedFeed {
         from_parsed(feed_rs::parser::parse(xml.as_bytes()).expect("the fixture parses"))

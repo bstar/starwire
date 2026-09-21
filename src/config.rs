@@ -94,6 +94,9 @@ pub struct Fetch {
     pub min_host_interval_secs: u64,
     pub user_agent_extra: String,
     pub refresh_on_start: bool,
+    /// Last in the struct because it is a table: TOML puts a table after
+    /// every scalar beside it, and a key written below one belongs to it.
+    pub host_intervals: std::collections::BTreeMap<String, u64>,
 }
 
 impl Default for Fetch {
@@ -107,6 +110,7 @@ impl Default for Fetch {
             min_host_interval_secs: core.min_host_interval_secs,
             user_agent_extra: core.user_agent_extra,
             refresh_on_start: core.refresh_on_start,
+            host_intervals: core.host_intervals,
         }
     }
 }
@@ -117,6 +121,7 @@ impl Default for Fetch {
 pub struct Articles {
     pub extract: bool,
     pub max_article_bytes: u64,
+    pub timeout_secs: u64,
     pub max_markdown_bytes: usize,
     pub keep_days: u32,
     pub max_entries_per_feed: usize,
@@ -130,6 +135,7 @@ impl Default for Articles {
         Self {
             extract: core.extract,
             max_article_bytes: core.max_article_bytes,
+            timeout_secs: core.timeout_secs,
             max_markdown_bytes: core.max_markdown_bytes,
             keep_days: core.keep_days,
             max_entries_per_feed: core.max_entries_per_feed,
@@ -220,10 +226,12 @@ impl Config {
                 min_host_interval_secs: self.fetch.min_host_interval_secs,
                 user_agent_extra: self.fetch.user_agent_extra.clone(),
                 refresh_on_start: self.fetch.refresh_on_start,
+                host_intervals: self.fetch.host_intervals.clone(),
             },
             articles: wire::ArticlesConfig {
                 extract: self.articles.extract,
                 max_article_bytes: self.articles.max_article_bytes.max(1024),
+                timeout_secs: self.articles.timeout_secs.max(1),
                 max_markdown_bytes: self.articles.max_markdown_bytes.max(256),
                 keep_days: self.articles.keep_days,
                 max_entries_per_feed: self.articles.max_entries_per_feed,
@@ -289,6 +297,13 @@ min_host_interval_secs = 2
 # you would rather the sites you read had a way to reach you.
 user_agent_extra = ""
 refresh_on_start = true
+# Gaps for particular hosts, in seconds, by host or by a tail of one. These
+# beat both min_host_interval_secs and the gaps STAR/WIRE already knows about
+# -- reddit.com every 61 seconds, archive.is every 10 -- so this is where a
+# site that has asked you to slow down goes.
+#
+# [fetch.host_intervals]
+# "example.org" = 30
 
 [articles]
 # Fetch the linked page and pull the article out of it. false leaves every
@@ -297,6 +312,10 @@ refresh_on_start = true
 extract = true
 # The most HTML downloaded for one article.
 max_article_bytes = 2097152
+# The whole of one page request. Longer than [fetch] timeout_secs on purpose:
+# a feed is a file the server already has, and an article is often rendered
+# when it is asked for.
+timeout_secs = 30
 # Markdown longer than this is cut at a paragraph boundary.
 max_markdown_bytes = 524288
 # Entries older than this are swept. Starred entries are always kept.
@@ -396,10 +415,12 @@ mod tests {
                 min_host_interval_secs: 5,
                 user_agent_extra: "contact@example.org".into(),
                 refresh_on_start: false,
+                host_intervals: [("example.org".to_string(), 30)].into_iter().collect(),
             },
             articles: Articles {
                 extract: false,
                 max_article_bytes: 4096,
+                timeout_secs: 45,
                 max_markdown_bytes: 1024,
                 keep_days: 7,
                 max_entries_per_feed: 50,
@@ -425,9 +446,11 @@ mod tests {
         assert_eq!(core.fetch.min_host_interval_secs, 5);
         assert_eq!(core.fetch.user_agent_extra, "contact@example.org");
         assert!(!core.fetch.refresh_on_start);
+        assert_eq!(core.fetch.host_intervals.get("example.org"), Some(&30));
 
         assert!(!core.articles.extract);
         assert_eq!(core.articles.max_article_bytes, 4096);
+        assert_eq!(core.articles.timeout_secs, 45);
         assert_eq!(core.articles.max_markdown_bytes, 1024);
         assert_eq!(core.articles.keep_days, 7);
         assert_eq!(core.articles.max_entries_per_feed, 50);
@@ -450,11 +473,13 @@ mod tests {
         let mut cfg = Config::default();
         cfg.fetch.parallel = 0;
         cfg.fetch.timeout_secs = 0;
+        cfg.articles.timeout_secs = 0;
         cfg.articles.page_size = 0;
         cfg.youtube.yt_dlp = "   ".into();
         let core = cfg.core();
         assert_eq!(core.fetch.parallel, 1, "a refresh needs somewhere to run");
         assert_eq!(core.fetch.timeout_secs, 1);
+        assert_eq!(core.articles.timeout_secs, 1);
         assert_eq!(core.articles.page_size, 10);
         assert_eq!(core.youtube.yt_dlp, "yt-dlp");
 

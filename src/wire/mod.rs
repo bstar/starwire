@@ -88,6 +88,12 @@ pub struct FetchConfig {
     /// of their own in the logs of the sites they read.
     pub user_agent_extra: String,
     pub refresh_on_start: bool,
+    /// Gaps for particular hosts, by host or by a dot-prefixed tail of one.
+    /// Beats both the default above and the table `wire::net` keeps of the
+    /// hosts a feed list of any size meets, which is what makes "the site I
+    /// read has asked me to slow down" a line in a file rather than a
+    /// release.
+    pub host_intervals: std::collections::BTreeMap<String, u64>,
 }
 
 impl Default for FetchConfig {
@@ -100,6 +106,7 @@ impl Default for FetchConfig {
             min_host_interval_secs: 2,
             user_agent_extra: String::new(),
             refresh_on_start: true,
+            host_intervals: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -113,6 +120,12 @@ pub struct ArticlesConfig {
     pub extract: bool,
     /// The most HTML downloaded for one article.
     pub max_article_bytes: u64,
+    /// The whole of one page request, connection and body included. Longer
+    /// than a feed's, because a feed is a file a server has already made and
+    /// an article is often rendered when it is asked for -- six of the
+    /// reference database's failures were timeouts on heavy pages behind
+    /// redirect wrappers.
+    pub timeout_secs: u64,
     /// Markdown above this is truncated at a paragraph boundary.
     pub max_markdown_bytes: usize,
     /// Entries older than this are swept, unless starred.
@@ -133,6 +146,7 @@ impl Default for ArticlesConfig {
         Self {
             extract: true,
             max_article_bytes: 2_097_152,
+            timeout_secs: 30,
             max_markdown_bytes: 524_288,
             keep_days: 30,
             max_entries_per_feed: 2000,

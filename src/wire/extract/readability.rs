@@ -10,8 +10,13 @@
 //! homepage, a search results page, a login wall and a paywall stub all fail
 //! it. Without it, readability happily returns the navigation of a homepage
 //! as an "article", and the reader shows a list of link text where the piece
-//! should be. Failing the gate is not an error -- it is the signal to fall
-//! back to whatever the feed itself carried.
+//! should be. Failing the gate is not an error -- it is the signal to try the
+//! page's own JSON-LD, and then to fall back to whatever the feed carried.
+//!
+//! The numbers the gate uses are loosened from the library's defaults, and
+//! `config` says what was measured to choose them. The short version: those
+//! defaults are for a button in a browser, pressed on a page somebody is
+//! already looking at, and a feed carries short news items every day.
 
 use anyhow::Result;
 
@@ -62,27 +67,46 @@ pub fn extract(html: &str, url: Option<&str>) -> Result<Extracted, ExtractError>
     let mut readability = dom_smoothie::Readability::new(html, url, Some(config()))
         .map_err(|e| ExtractError::Failed(e.to_string()))?;
 
-    if !readability.is_probably_readable() {
-        return Err(ExtractError::NotReadable);
+    let readable = readability.is_probably_readable();
+    let scored = if readable {
+        Some(
+            readability
+                .parse()
+                .map_err(|e| ExtractError::Failed(e.to_string()))?,
+        )
+    } else {
+        None
+    };
+
+    if let Some(article) = scored {
+        let content_html = article.content.to_string();
+        if article.length >= MIN_LENGTH && !content_html.trim().is_empty() {
+            return Ok(Extracted {
+                title: nonempty(article.title),
+                byline: article.byline.and_then(nonempty),
+                site_name: article.site_name.and_then(nonempty),
+                excerpt: article.excerpt.and_then(nonempty),
+                image_url: article.image.and_then(nonempty),
+                content_html,
+                length: article.length,
+            });
+        }
     }
 
-    let article = readability
-        .parse()
-        .map_err(|e| ExtractError::Failed(e.to_string()))?;
-
-    let content_html = article.content.to_string();
-    if article.length < MIN_LENGTH || content_html.trim().is_empty() {
-        return Err(ExtractError::Empty);
+    // The page's own account of itself, before giving up. A site that
+    // renders its article with JavaScript often still puts the whole of it
+    // in a `<script type="application/ld+json">` for a search engine to
+    // read, and that is the one thing on such a page worth having.
+    if let Some(found) = json_ld::article(html) {
+        if found.body.chars().count() >= MIN_LENGTH {
+            return Ok(found.into());
+        }
     }
 
-    Ok(Extracted {
-        title: nonempty(article.title),
-        byline: article.byline.and_then(nonempty),
-        site_name: article.site_name.and_then(nonempty),
-        excerpt: article.excerpt.and_then(nonempty),
-        image_url: article.image.and_then(nonempty),
-        content_html,
-        length: article.length,
+    Err(if readable {
+        ExtractError::Empty
+    } else {
+        ExtractError::NotReadable
     })
 }
 
@@ -99,6 +123,24 @@ pub fn is_probably_readable(html: &str) -> bool {
 
 fn config() -> dom_smoothie::Config {
     dom_smoothie::Config {
+        // The gate and the scoring, both loosened from the defaults, and
+        // both measured. Of the twenty-five pages in the reference database
+        // refused as "does not read like an article", five were Arch Linux
+        // news items and three were Substack posts -- real articles of five
+        // hundred to a thousand characters, which their feeds prove exist --
+        // and the other seventeen were landing pages, login pages and
+        // JavaScript shells that these numbers still refuse. A short news
+        // item is a normal thing for a feed to carry, and the defaults here
+        // (a score of 20 over 140 characters, a 500-character floor) are
+        // tuned for a browser button somebody presses on a page they are
+        // already looking at.
+        readable_min_score: 8.0,
+        readable_min_content_length: 140,
+        char_threshold: 300,
+        // More candidates because the pages this now reaches are short ones,
+        // where the difference between the best node and the fourth best is
+        // a paragraph rather than a page.
+        n_top_candidates: 8,
         // A page that is thirty thousand elements is a search result listing
         // or a generated index, not an article, and scoring all of it is the
         // one way this becomes slow. Readability treats 0 as no limit, which
@@ -118,6 +160,147 @@ fn config() -> dom_smoothie::Config {
         // marker.
         text_mode: dom_smoothie::TextMode::Raw,
         ..dom_smoothie::Config::default()
+    }
+}
+
+/// What a page says about itself in `application/ld+json`.
+///
+/// `dom_smoothie` reads this too -- `Readability::parse_json_ld` is public --
+/// but what it returns is a `Metadata`: a title, a byline, an excerpt, an
+/// image. The one field wanted here, `articleBody`, is not on it, and the
+/// method is only callable on a `Readability` whose document has already
+/// been through the scoring pass that may have removed the script. So the
+/// document is read again, from the bytes as they arrived.
+mod json_ld {
+    use super::Extracted;
+
+    /// An article as its own JSON-LD describes it.
+    pub struct Article {
+        pub title: Option<String>,
+        pub byline: Option<String>,
+        pub body: String,
+    }
+
+    impl From<Article> for Extracted {
+        fn from(article: Article) -> Self {
+            let length = article.body.chars().count();
+            Self {
+                title: article.title,
+                byline: article.byline,
+                site_name: None,
+                excerpt: None,
+                image_url: None,
+                content_html: paragraphs(&article.body),
+                length,
+            }
+        }
+    }
+
+    /// How deep the search for an `articleBody` goes.
+    ///
+    /// JSON-LD nests: an article is often inside an `@graph`, which is
+    /// inside an array. Eight is more than any real document needs and
+    /// stops a hostile one from being a stack overflow.
+    const MAX_DEPTH: usize = 8;
+
+    /// The first article-shaped object in any of the page's JSON-LD blocks.
+    pub fn article(html: &str) -> Option<Article> {
+        let document = dom_query::Document::from(html);
+        for node in document
+            .select(r#"script[type="application/ld+json"]"#)
+            .nodes()
+        {
+            let text = node.text().to_string();
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(strip_cdata(&text)) else {
+                continue;
+            };
+            if let Some(found) = find(&value, 0) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    /// Some sites wrap the JSON in a CDATA section, which is XML rather than
+    /// JSON and will not parse as it stands.
+    fn strip_cdata(text: &str) -> &str {
+        let trimmed = text.trim();
+        trimmed
+            .strip_prefix("<![CDATA[")
+            .and_then(|rest| rest.strip_suffix("]]>"))
+            .unwrap_or(trimmed)
+            .trim()
+    }
+
+    fn find(value: &serde_json::Value, depth: usize) -> Option<Article> {
+        if depth > MAX_DEPTH {
+            return None;
+        }
+        match value {
+            serde_json::Value::Object(object) => {
+                if let Some(body) = object.get("articleBody").and_then(|v| v.as_str()) {
+                    let body = body.trim();
+                    if !body.is_empty() {
+                        return Some(Article {
+                            title: text(object.get("headline"))
+                                .or_else(|| text(object.get("name"))),
+                            byline: author(object.get("author")),
+                            body: body.to_string(),
+                        });
+                    }
+                }
+                object.values().find_map(|v| find(v, depth + 1))
+            }
+            serde_json::Value::Array(items) => items.iter().find_map(|v| find(v, depth + 1)),
+            _ => None,
+        }
+    }
+
+    fn text(value: Option<&serde_json::Value>) -> Option<String> {
+        let text = value?.as_str()?.trim();
+        (!text.is_empty()).then(|| text.to_string())
+    }
+
+    /// `author` is a string, an object with a `name`, or an array of either.
+    fn author(value: Option<&serde_json::Value>) -> Option<String> {
+        match value? {
+            serde_json::Value::String(_) => text(value),
+            serde_json::Value::Object(object) => text(object.get("name")),
+            serde_json::Value::Array(items) => {
+                let names: Vec<String> = items.iter().filter_map(|v| author(Some(v))).collect();
+                (!names.is_empty()).then(|| names.join(", "))
+            }
+            _ => None,
+        }
+    }
+
+    /// The body back into HTML, because HTML is what the next stage takes.
+    ///
+    /// `articleBody` is plain text with blank lines between paragraphs, so
+    /// this is the one place in the extractor that writes markup rather than
+    /// reading it -- and the reason every character is escaped on the way.
+    fn paragraphs(body: &str) -> String {
+        let mut out = String::with_capacity(body.len() + 32);
+        out.push_str("<div>");
+        for paragraph in body.split("\n\n") {
+            let paragraph = paragraph.trim();
+            if paragraph.is_empty() {
+                continue;
+            }
+            out.push_str("<p>");
+            for ch in paragraph.chars() {
+                match ch {
+                    '<' => out.push_str("&lt;"),
+                    '>' => out.push_str("&gt;"),
+                    '&' => out.push_str("&amp;"),
+                    '\n' => out.push_str("<br>"),
+                    other => out.push(other),
+                }
+            }
+            out.push_str("</p>");
+        }
+        out.push_str("</div>");
+        out
     }
 }
 
@@ -169,6 +352,88 @@ mod tests {
         );
         assert!(got.length >= MIN_LENGTH);
         assert_eq!(got.title.as_deref(), Some("Why the borrow checker says no"));
+    }
+
+    fn page(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata/pages")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    /// The five Arch news items and three Substack posts the gate used to
+    /// refuse. Short is not the same as not an article, and the feed proves
+    /// the article exists.
+    #[test]
+    fn a_short_news_item_is_an_article() {
+        let got = extract(
+            &page("short-real.html"),
+            Some("https://example.org/news/nft/"),
+        )
+        .unwrap();
+        assert!(
+            got.content_html.contains("defaults to the nft backend"),
+            "{}",
+            got.content_html
+        );
+        assert!(
+            !got.content_html.contains("Donate"),
+            "the furniture came with it: {}",
+            got.content_html
+        );
+    }
+
+    /// A page drawn by a script has nothing to score and everything to read,
+    /// in its own structured data.
+    #[test]
+    fn a_page_that_draws_itself_later_gives_up_its_json_ld() {
+        let got = extract(&page("jsonld-only.html"), Some("https://example.org/a")).unwrap();
+        assert!(
+            got.content_html
+                .contains("nothing in it for a reader to find"),
+            "{}",
+            got.content_html
+        );
+        assert_eq!(
+            got.title.as_deref(),
+            Some("The whole of it was in the head all along")
+        );
+        assert_eq!(got.byline.as_deref(), Some("Jane Example"));
+        assert!(
+            got.content_html.matches("<p>").count() >= 3,
+            "the blank lines between paragraphs were lost: {}",
+            got.content_html
+        );
+        assert!(
+            !got.content_html.contains("Loading"),
+            "{}",
+            got.content_html
+        );
+    }
+
+    #[test]
+    fn the_json_ld_body_is_escaped_rather_than_pasted_in() {
+        let html = format!(
+            r#"<html><head><script type="application/ld+json">
+            {{"@type": "Article", "articleBody": "{}"}}
+            </script></head><body><div id="root"></div></body></html>"#,
+            format_args!(
+                "A body with <b>markup</b> and an & in it. {}",
+                "Padding to get it past the floor. ".repeat(20)
+            )
+        );
+        let got = extract(&html, None).unwrap();
+        assert!(!got.content_html.contains("<b>"), "{}", got.content_html);
+        assert!(
+            got.content_html.contains("&lt;b&gt;markup&lt;/b&gt;"),
+            "{}",
+            got.content_html
+        );
+        assert!(
+            got.content_html.contains("an &amp; in it"),
+            "{}",
+            got.content_html
+        );
     }
 
     #[test]

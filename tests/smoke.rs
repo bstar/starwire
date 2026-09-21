@@ -128,8 +128,8 @@ fn a_newsboat_urls_file_is_planned_without_writing_anything() {
         "the scriptbarrel `name=` titles were not picked up: {out}"
     );
     assert!(
-        out.contains("https://old.reddit.com/"),
-        "http was not rewritten to https: {out}"
+        out.contains("https://www.reddit.com/"),
+        "http was not rewritten to https, or old.reddit.com was left as it was: {out}"
     );
     assert!(
         out.contains("saved search"),
@@ -268,10 +268,11 @@ fn a_replay_run_fetches_reads_and_prints_the_fixture_article() {
 }
 
 /// `fetch --no-extract` leaves every page unpulled, which is the shape an
-/// entry has between arriving and being extracted -- and the shape that used
-/// to make `show` print nothing at all.
+/// entry has between arriving and being extracted. Since 0.0.2 that shape is
+/// still readable: the feed's own text is stored with the entry, so `show`
+/// prints it rather than one line saying there is nothing.
 #[test]
-fn an_entry_with_nothing_behind_it_still_shows_its_header_and_says_why() {
+fn an_entry_whose_page_is_not_pulled_still_reads_as_what_the_feed_carried() {
     let home = home();
     let replay = testdata("replay");
     stdout(
@@ -296,23 +297,54 @@ fn an_entry_with_nothing_behind_it_still_shows_its_header_and_says_why() {
         shown.contains("Why the borrow checker says no"),
         "the header: {shown}"
     );
-    assert!(shown.contains("pending"), "the status: {shown}");
     assert!(
-        shown.contains("extraction pending"),
-        "and why there is no body: {shown}"
+        shown.contains("pending"),
+        "nothing has been fetched yet: {shown}"
+    );
+    assert!(
+        shown.contains("Points: 212"),
+        "the feed's own text is what there is to read: {shown}"
     );
 
-    // `--markdown` is the pipe: nothing on stdout, and a zero exit.
-    let output = command(home.path())
-        .args(["show", id, "--markdown"])
-        .output()
-        .expect("running starwire show --markdown");
-    assert!(output.status.success(), "{:?}", output.status);
-    assert!(
-        output.stdout.is_empty(),
-        "{:?}",
-        String::from_utf8_lossy(&output.stdout)
+    // And `--markdown`, the pipe-friendly format, is that same text.
+    let markdown = stdout(home.path(), &["show", id, "--markdown"]);
+    assert!(markdown.contains("Points: 212"), "{markdown}");
+}
+
+/// The whole of WP-7's first item, through the binary: a page that does not
+/// yield leaves the entry readable, and `show` prints both the feed's text and
+/// the reason the page gave nothing.
+#[test]
+fn an_entry_whose_page_does_not_yield_shows_the_feeds_text_and_the_reason() {
+    let home = home();
+    let replay = testdata("replay");
+    stdout(
+        home.path(),
+        &["--replay", replay.to_str().unwrap(), "fetch"],
     );
+
+    let listed = stdout(home.path(), &["list", "--limit", "200"]);
+    let line = listed
+        .lines()
+        .find(|l| l.contains("A page that will not give up an article"))
+        .unwrap_or_else(|| panic!("{listed}"));
+    let id = line.split_whitespace().next().expect("an entry id");
+
+    let shown = stdout(home.path(), &["show", id]);
+    assert!(shown.contains("failed"), "the status word: {shown}");
+    assert!(
+        shown.contains("does not read like an article"),
+        "the reason the reader's banner will draw: {shown}"
+    );
+    assert!(
+        shown.contains("Two sentences, and a link to the rest."),
+        "the feed's own text, which is what there is to read: {shown}"
+    );
+
+    // And the pipe-friendly format is that text on its own.
+    let markdown = stdout(home.path(), &["show", id, "--markdown"]);
+    assert!(markdown.contains("Two sentences"), "{markdown}");
+    assert!(!markdown.contains("failed"), "{markdown}");
 }
 
 #[test]
@@ -384,6 +416,27 @@ fn extracting_one_page_prints_it_without_touching_the_database() {
         "",
         "the probe wrote to the database"
     );
+}
+
+/// A page that answers 200 with a free sample. The probe says so rather than
+/// printing the sample, because the sample is what the feed already had.
+#[test]
+fn a_paywall_stub_is_reported_as_one_rather_than_printed() {
+    let home = home();
+    let replay = testdata("replay");
+    let output = command(home.path())
+        .args([
+            "--replay",
+            replay.to_str().unwrap(),
+            "extract",
+            "https://example.org/posts/paywalled",
+        ])
+        .output()
+        .expect("running starwire extract");
+    assert!(!output.status.success(), "{:?}", output.status);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("paywall"), "{stderr}");
+    assert!(output.stdout.is_empty(), "{:?}", output.stdout);
 }
 
 #[test]

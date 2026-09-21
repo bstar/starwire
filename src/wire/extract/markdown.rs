@@ -40,12 +40,87 @@ pub fn to_markdown(html: &str, base: Option<&url::Url>) -> Result<String> {
 /// and `<style>` are never text however they got here. Each of them
 /// otherwise arrives as a paragraph of nothing, or as the literal text of a
 /// script.
+///
+/// `<noscript>` is **not** in that list, which is the one entry worth
+/// explaining. A page that loads its pictures with JavaScript puts the real
+/// `<img>` inside a `<noscript>` for everybody else, and this program is
+/// everybody else: skipping the tag threw away the only copy of the picture
+/// that had a URL in it. `scripting_enabled(false)` is the other half --
+/// without it `html5ever` treats the contents of a `<noscript>` as raw text,
+/// which would arrive as the literal characters `<img src=...>`.
 fn converter() -> htmd::HtmlToMarkdown {
     htmd::HtmlToMarkdown::builder()
+        .options(htmd::options::Options {
+            // A hard line break as a trailing backslash rather than as two
+            // trailing spaces. `normalise::collapse` trims trailing
+            // whitespace off every line -- it has to, or a page indented with
+            // spaces is half a screen of them -- and that silently deleted
+            // every hard break in every article: not one survived in the
+            // reference database's three hundred and thirty.
+            br_style: htmd::options::BrStyle::Backslash,
+            ..htmd::options::Options::default()
+        })
+        .scripting_enabled(false)
         .skip_tags(vec![
-            "script", "style", "noscript", "iframe", "form", "button", "svg", "nav", "footer",
+            "script", "style", "iframe", "form", "button", "svg", "nav", "footer",
         ])
+        // Registered after `skip_tags`, because the last handler for a tag is
+        // the one that runs and `skip_tags` is itself a handler.
+        .add_handler(vec!["a"], anchor)
         .build()
+}
+
+/// A link, with two cases the default handler gets wrong for a reader.
+///
+/// **A link with nothing visible in it disappears.** 121 of the 333 extracted
+/// articles in the reference database carried at least one `[](url)`: a
+/// permalink anchor, a bare `<a name>`, an icon whose `<svg>` this converter
+/// skips. In the reader each one is an empty pair of brackets with a link
+/// number beside it, and following it is how somebody finds out it went
+/// nowhere interesting.
+///
+/// **A link around nothing but a picture becomes the picture.** That is the
+/// usual markup for a figure that opens larger, and `[![](x)](x)` in a
+/// terminal is two link numbers and no picture. WP-8 draws the picture; this
+/// is what leaves it something to draw.
+fn anchor(
+    handlers: &dyn htmd::element_handler::Handlers,
+    element: htmd::Element,
+) -> Option<htmd::element_handler::HandlerResult> {
+    let inner = handlers.walk_children(element.node).content;
+    let trimmed = inner.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if is_one_image(trimmed) {
+        return Some(trimmed.to_string().into());
+    }
+    handlers.fallback(element)
+}
+
+/// Whether some markdown is exactly one image and nothing else.
+fn is_one_image(md: &str) -> bool {
+    let Some(rest) = md.strip_prefix("![") else {
+        return false;
+    };
+    let Some(alt_end) = rest.find("](") else {
+        return false;
+    };
+    if rest[..alt_end].contains('[') {
+        return false;
+    }
+    // The target may have one level of nested parentheses in it, which is
+    // what a Wikipedia URL looks like.
+    let mut depth = 0usize;
+    for (offset, ch) in rest[alt_end + 2..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' if depth == 0 => return alt_end + 2 + offset + 1 == rest.len(),
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -110,6 +185,72 @@ mod tests {
         assert!(!got.contains("alert"), "{got}");
         assert!(!got.contains("color:red"), "{got}");
         assert!(!got.contains("Subscribe"), "{got}");
+    }
+
+    #[test]
+    fn a_link_with_nothing_visible_in_it_disappears() {
+        // A permalink anchor and an icon link, which is where 121 of the 333
+        // extracted articles in the reference database got their `[](url)`
+        // from.
+        let got = md(concat!(
+            r##"<p>A heading<a href="#h" class="anchor"></a> and "##,
+            r#"<a href="https://e.org/x"><svg viewBox="0 0 1 1"></svg></a> after.</p>"#
+        ));
+        assert!(!got.contains("[]("), "{got}");
+        assert!(got.contains("A heading"), "{got}");
+        assert!(got.contains("after"), "{got}");
+    }
+
+    #[test]
+    fn a_link_that_is_only_a_picture_becomes_the_picture() {
+        let got = md(concat!(
+            r#"<figure><a href="https://e.org/big.png">"#,
+            r#"<img src="https://e.org/small.png" alt="A harbour"></a></figure>"#
+        ));
+        assert_eq!(got.trim(), "![A harbour](https://e.org/small.png)");
+
+        // With no alt text at all the URL is still kept: WP-8 draws it, and
+        // the alt is what a reader falls back to.
+        let got = md(r#"<a href="https://e.org/big.png"><img src="https://e.org/s.png"></a>"#);
+        assert_eq!(got.trim(), "![](https://e.org/s.png)");
+
+        // A link with a picture *and* words in it is still a link.
+        let got = md(r#"<a href="https://e.org/x"><img src="https://e.org/s.png"> Read on</a>"#);
+        assert!(got.contains("](https://e.org/x)"), "{got}");
+    }
+
+    #[test]
+    fn a_hard_break_survives_being_tidied() {
+        let got = md("<p>First line<br>second line</p>");
+        assert!(
+            got.contains("First line\\\nsecond line"),
+            "a break has to survive `normalise::collapse`, which trims trailing \
+             whitespace: {got:?}"
+        );
+        let tidied = super::super::normalise::normalise(
+            &got,
+            None,
+            super::super::normalise::Options::default(),
+        );
+        assert!(tidied.contains("First line\\\nsecond line"), "{tidied:?}");
+    }
+
+    #[test]
+    fn a_picture_a_page_only_shows_to_a_browser_without_javascript_survives() {
+        // The shape every lazy-loading image library emits: a spacer with the
+        // real one in a `<noscript>` beside it.
+        let got = md(concat!(
+            r#"<p><img src="https://e.org/spacer.gif" alt="">"#,
+            r#"<noscript><img src="https://e.org/real.jpg" alt="The real one"></noscript></p>"#
+        ));
+        assert!(
+            got.contains("![The real one](https://e.org/real.jpg)"),
+            "{got}"
+        );
+        assert!(
+            !got.contains("&lt;img"),
+            "the noscript arrived as text rather than as markup: {got}"
+        );
     }
 
     #[test]

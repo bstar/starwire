@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<title>A page that draws itself later</title>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "name": "Example Wire"
+    },
+    {
+      "@type": "NewsArticle",
+      "headline": "The whole of it was in the head all along",
+      "author": { "@type": "Person", "name": "Jane Example" },
+      "articleBody": "A page whose body is drawn by a script has nothing in it for a reader to find: the markup is a loading spinner and an empty container, and what the algorithm scores is furniture.\n\nThe same page, for the benefit of a search engine, carries the entire article as a string in its structured data. That string is plain text with blank lines between its paragraphs, and it is the only honest copy of the piece the page will give anybody.\n\nSo it is read, escaped, and turned back into paragraphs, which is the one place in this extractor that writes markup rather than reading it."
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div id="root"><div class="spinner">Loading…</div></div>
+<script>window.__DATA__ = {};</script>
+</body>
+</html>

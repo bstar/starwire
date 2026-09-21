@@ -291,7 +291,13 @@ fn extract_all(
     if queue.is_empty() {
         return Ok(0);
     }
-    let limits = wire::extract::Limits::from(&core.articles);
+    let limits = wire::extract::Limits {
+        // The reader's own refresh interval is what "come back later" means
+        // to them; `Limits::from` cannot know it, because it is a `[fetch]`
+        // key and that is an `[articles]` one.
+        retry_base_secs: core.fetch.refresh_minutes as i64 * 60,
+        ..wire::extract::Limits::from(&core.articles)
+    };
     let (send_result, results) = crossbeam_channel::unbounded();
     let (send_job, jobs) = crossbeam_channel::unbounded();
     for job in queue {
@@ -944,7 +950,12 @@ fn run_extract(core: &wire::WireConfig, http: &dyn Http, url: &str) -> Result<()
     let result = wire::extract::run(http, url, wire::extract::Limits::from(&core.articles))?;
     let mut out = std::io::stdout().lock();
 
-    if result.status == ArticleStatus::Failed {
+    // Nothing to print is a failure however it is spelled: a 403, a page that
+    // does not read like an article, and a paywall stub -- which comes back
+    // as the feed's own text, and here there is no feed -- all land here, and
+    // the reason is the whole value of the probe.
+    let markdown = result.markdown.as_deref().unwrap_or("").trim_end();
+    if markdown.is_empty() {
         anyhow::bail!(
             "{url}: {}",
             result.error.as_deref().unwrap_or("it did not yield")
@@ -965,10 +976,7 @@ fn run_extract(core: &wire::WireConfig, http: &dyn Http, url: &str) -> Result<()
         let _ = print(&mut out, &meta.join(" · "));
     }
     let _ = print(&mut out, "");
-    let _ = print(
-        &mut out,
-        result.markdown.as_deref().unwrap_or("").trim_end(),
-    );
+    let _ = print(&mut out, markdown);
     Ok(())
 }
 
