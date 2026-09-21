@@ -46,6 +46,11 @@ pub fn sources(html: &str) -> String {
     // hoisted onto the fallback before the `<img>` pass looks at it.
     for picture in document.select("picture").nodes() {
         let inside = picture.descendants();
+        // The *last* usable `<source>`, not the first. A browser takes the
+        // first format it can decode, so the page puts the newest one at the
+        // top: AVIF, then WebP, then the `<img>`. This decodes PNG, JPEG and
+        // WebP and not AVIF, so working up from the bottom is the way to land
+        // on something that can be drawn.
         let best = inside
             .iter()
             .filter(|node| is_tag(node, "source"))
