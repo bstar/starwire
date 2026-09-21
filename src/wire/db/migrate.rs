@@ -111,10 +111,15 @@ fn was_transient(error: &str) -> bool {
     if error.contains("timeout") || error.contains("timed out") {
         return true;
     }
-    error
-        .split(|c: char| !c.is_ascii_digit())
-        .filter_map(|word| word.parse::<u16>().ok())
-        .any(|status| status == 429 || (500..600).contains(&status))
+    // Only a number that follows the word counts. Every reason 0.0.1 wrote
+    // with a status code in it said "answered <status>", and the other numbers
+    // in these strings are byte counts and years in URLs.
+    error.split("answered ").skip(1).any(|rest| {
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        digits
+            .parse::<u16>()
+            .is_ok_and(|status| status == 429 || (500..600).contains(&status))
+    })
 }
 
 /// Give every failed extraction the feed's own text.
@@ -472,6 +477,7 @@ CREATE TABLE IF NOT EXISTS meta (
             "the page does not read like an article",
             "the body was larger than the 2097152 byte limit",
             "configured for https only: http://e.org/",
+            "configured for https only: http://e.org/2026/500-days-of-summer",
         ] {
             assert!(!was_transient(permanent), "{permanent}");
         }
