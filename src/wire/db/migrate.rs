@@ -17,7 +17,7 @@
 //! rebuilt.
 
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use super::schema;
 
@@ -58,6 +58,7 @@ fn one_to_two(conn: &Connection) -> Result<()> {
     add_column(conn, "article", "retry_after", "INTEGER")?;
     add_column(conn, "entry", "final_url", "TEXT")?;
     backfill_failed_markdown(conn)?;
+    recanonicalise_feed_urls(conn)?;
     Ok(())
 }
 
@@ -88,6 +89,51 @@ fn backfill_failed_markdown(conn: &Connection) -> Result<()> {
         conn.execute(
             "UPDATE article SET markdown = ?2 WHERE entry_id = ?1",
             rusqlite::params![entry_id, markdown],
+        )?;
+    }
+    Ok(())
+}
+
+/// Put every stored feed URL through the canonicalisation this build does.
+///
+/// Today that means one thing: `old.reddit.com` becomes `www.reddit.com`,
+/// because the old host has started answering a feed request with a login
+/// page. A file written by 0.0.1 has the old spelling in it and nothing else
+/// would ever change it -- `canonicalise` runs when a feed is *added*.
+///
+/// `source_url` is deliberately left alone: it is what was typed or imported,
+/// it is what a second import of the same `urls` file matches on, and
+/// rewriting it would make this migration lose the one record of what the
+/// reader actually asked for. `feed.url` is UNIQUE, so a row whose new
+/// spelling is already taken is left where it is rather than made into an
+/// error -- the reader has both, and removing one is theirs to do.
+fn recanonicalise_feed_urls(conn: &Connection) -> Result<()> {
+    let rows: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare("SELECT id, url FROM feed")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for (id, url) in rows {
+        let Ok(mut parsed) = url::Url::parse(&url) else {
+            continue;
+        };
+        crate::wire::feed::canonical_url(&mut parsed);
+        let rewritten = parsed.to_string();
+        if rewritten == url {
+            continue;
+        }
+        let taken: Option<i64> = conn
+            .query_row("SELECT id FROM feed WHERE url = ?1", [&rewritten], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if taken.is_some() {
+            tracing::warn!(%url, %rewritten, "both spellings of this feed are subscribed to; leaving the old one");
+            continue;
+        }
+        conn.execute(
+            "UPDATE feed SET url = ?2 WHERE id = ?1",
+            rusqlite::params![id, rewritten],
         )?;
     }
     Ok(())
@@ -322,6 +368,65 @@ CREATE TABLE IF NOT EXISTS meta (
             })
             .unwrap();
         assert_eq!(empty, None);
+    }
+
+    #[test]
+    fn a_reddit_feed_from_0_0_1_is_moved_to_the_host_that_still_answers() {
+        let conn = v1_file();
+        conn.execute_batch(
+            "INSERT INTO feed(id, url, source_url, kind, added_at)
+             VALUES (2, 'https://old.reddit.com/r/rust/.rss',
+                        'http://old.reddit.com/r/rust/.rss', 2, 0),
+                    (3, 'https://example.org/feed.xml', NULL, 0, 0);",
+        )
+        .unwrap();
+        open_as_the_program_does(&conn);
+
+        let (url, source): (String, Option<String>) = conn
+            .query_row("SELECT url, source_url FROM feed WHERE id = 2", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(url, "https://www.reddit.com/r/rust/.rss");
+        assert_eq!(
+            source.as_deref(),
+            Some("http://old.reddit.com/r/rust/.rss"),
+            "what was imported is what a second import matches on"
+        );
+
+        let other: String = conn
+            .query_row("SELECT url FROM feed WHERE id = 3", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(other, "https://example.org/feed.xml");
+    }
+
+    #[test]
+    fn a_reddit_feed_subscribed_to_under_both_names_keeps_both() {
+        let conn = v1_file();
+        conn.execute_batch(
+            "INSERT INTO feed(id, url, kind, added_at)
+             VALUES (2, 'https://old.reddit.com/r/rust/.rss', 2, 0),
+                    (3, 'https://www.reddit.com/r/rust/.rss', 2, 0);",
+        )
+        .unwrap();
+        // The rewrite would collide with a row that is already there, and
+        // `feed.url` is UNIQUE. Leaving it is right: removing somebody's
+        // subscription is not a migration's business.
+        open_as_the_program_does(&conn);
+        let urls: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT url FROM feed WHERE id IN (2, 3) ORDER BY id")
+                .unwrap();
+            let rows = stmt.query_map([], |r| r.get(0)).unwrap();
+            rows.map(Result::unwrap).collect()
+        };
+        assert_eq!(
+            urls,
+            [
+                "https://old.reddit.com/r/rust/.rss",
+                "https://www.reddit.com/r/rust/.rss"
+            ]
+        );
     }
 
     #[test]

@@ -1205,7 +1205,7 @@ mod tests {
             [Done::FeedAdded {
                 url, is_new: true, ..
             }] => {
-                assert_eq!(url, "https://old.reddit.com/r/rust/.rss")
+                assert_eq!(url, "https://www.reddit.com/r/rust/.rss")
             }
             other => panic!("{other:?}"),
         }

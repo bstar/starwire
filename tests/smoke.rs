@@ -128,8 +128,8 @@ fn a_newsboat_urls_file_is_planned_without_writing_anything() {
         "the scriptbarrel `name=` titles were not picked up: {out}"
     );
     assert!(
-        out.contains("https://old.reddit.com/"),
-        "http was not rewritten to https: {out}"
+        out.contains("https://www.reddit.com/"),
+        "http was not rewritten to https, or old.reddit.com was left as it was: {out}"
     );
     assert!(
         out.contains("saved search"),

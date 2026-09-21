@@ -236,7 +236,9 @@ pub struct Canonical {
 /// 2. **`http` becomes `https`.** The agent refuses plaintext by design (see
 ///    `net.rs`), so `http://old.reddit.com/r/rust/.rss` -- which is what the
 ///    reference `urls` file actually says -- would otherwise simply fail.
-///    The original is kept as the feed's `source_url`.
+///    The original is kept as the feed's `source_url`. The same step applies
+///    [`super::feed::canonical_url`], which is where `old.reddit.com`
+///    becomes `www.reddit.com`.
 /// 3. **A YouTube channel becomes its `videos.xml` feed.** So the same
 ///    channel added as a handle, imported from `scriptbarrel`, and pasted as
 ///    a video URL is one row rather than three.
@@ -262,6 +264,8 @@ pub fn canonicalise(raw: &str) -> Result<Canonical> {
         // between a special scheme and a non-special one.
         let _ = url.set_scheme("https");
     }
+    // The host rewrites that are not YouTube's, `old.reddit.com` among them.
+    super::feed::canonical_url(&mut url);
     anyhow::ensure!(
         url.scheme() == "https",
         "{trimmed}: this reads feeds over https, not {}",
@@ -632,7 +636,10 @@ mod tests {
     #[test]
     fn http_becomes_https_because_the_agent_will_not_speak_anything_else() {
         let got = canonicalise("http://old.reddit.com/r/rust/.rss").unwrap();
-        assert_eq!(got.url, "https://old.reddit.com/r/rust/.rss");
+        assert_eq!(
+            got.url, "https://www.reddit.com/r/rust/.rss",
+            "and old.reddit.com now answers a feed request with a login page"
+        );
         assert_eq!(got.kind, FeedKind::Reddit);
     }
 
