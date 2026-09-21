@@ -95,6 +95,19 @@ impl App {
 
     // -- the views ----------------------------------------------------------
 
+    /// What a list's crumb row says about the filter on it: the field's own
+    /// text while it is open, else whatever `enter` kept.
+    fn filter_of(&self, m: ModuleId) -> Option<panels::Filter<'_>> {
+        if let Some(text) = self.filter_field(m) {
+            return Some(panels::Filter { text, typing: true });
+        }
+        let kept = self.filter_text(m);
+        (!kept.is_empty()).then_some(panels::Filter {
+            text: kept,
+            typing: false,
+        })
+    }
+
     pub(super) fn sources_view(&self) -> sources::View<'_> {
         sources::View {
             theme: &self.theme,
@@ -105,6 +118,7 @@ impl App {
             cursor: self.cursor_of(ModuleId::Sources),
             scroll: self.scroll_of(ModuleId::Sources),
             summary: self.view.source_summary.clone(),
+            filter: self.filter_of(ModuleId::Sources),
             loading: false,
         }
     }
@@ -143,7 +157,7 @@ impl App {
             badge: open.then(|| self.view.entry_badge.clone()).flatten(),
             crumb,
             loading: open && self.view.entries_loading,
-            filter: self.filter.as_ref().map(|f| f.text()),
+            filter: self.filter_of(ModuleId::Entries),
             empty: if open {
                 "nothing here"
             } else {

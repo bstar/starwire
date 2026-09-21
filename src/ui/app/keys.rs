@@ -69,27 +69,34 @@ impl App {
 
     /// The `/` field, while it has focus. `true` when the key was typing
     /// rather than a command.
+    ///
+    /// Which list the typing narrows was decided when `/` was pressed and is
+    /// remembered on the field itself: focus can move out from under a
+    /// half-typed filter, and the letters after it still belong to the list
+    /// it was opened on.
     fn filter_key(&mut self, k: KeyEvent) -> bool {
-        let input = self.filter.as_mut().expect("checked by the caller");
+        let filter = self.filter.as_mut().expect("checked by the caller");
+        let module = filter.module;
         if keymap::filter_eats(k) {
-            let before = input.text().to_string();
-            input.handle(k);
-            if input.text() != before {
-                let text = input.text().to_string();
-                self.core.send(Command::Filter(text));
+            let before = filter.input.text().to_string();
+            filter.input.handle(k);
+            if filter.input.text() != before {
+                let text = filter.input.text().to_string();
+                self.set_filter(module, text);
             }
             return true;
         }
         match k.code {
             // Enter keeps the filter on the list and puts the field away;
-            // esc throws the filter away as well. Both are the way out.
+            // esc throws the filter away as well. Both are the way out, and
+            // the status row says so while the field is up.
             KeyCode::Enter => {
                 self.filter = None;
                 true
             }
             KeyCode::Esc => {
                 self.filter = None;
-                self.core.send(Command::ClearFilter);
+                self.clear_filter(module);
                 true
             }
             _ => false,
@@ -163,10 +170,11 @@ impl App {
             self.repaint = true;
             return;
         }
-        if let Some(input) = self.filter.as_mut() {
-            input.paste(text);
-            let text = input.text().to_string();
-            self.core.send(Command::Filter(text));
+        if let Some(filter) = self.filter.as_mut() {
+            filter.input.paste(text);
+            let module = filter.module;
+            let text = filter.input.text().to_string();
+            self.set_filter(module, text);
         }
     }
 

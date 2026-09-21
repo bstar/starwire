@@ -71,6 +71,32 @@ impl ModuleId {
     }
 }
 
+/// The `/text` a list's crumb row carries at its right, while one of the
+/// two `/` filters is on it.
+///
+/// `typing` is the difference between the field being open -- every key is
+/// a letter, so it is drawn in the accent and the status row says how to
+/// leave -- and a filter `enter` kept, which is still narrowing the list
+/// while the keys have gone back to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Filter<'a> {
+    pub text: &'a str,
+    pub typing: bool,
+}
+
+/// How a list's crumb row draws its `/text`: in the accent, bold, while the
+/// field is open, so the row reads as a mode; in `warn`, which is what the
+/// entries list has always used, for a filter that is merely still on.
+pub fn filter_style(t: &super::theme::Theme, typing: bool) -> Style {
+    if typing {
+        Style::default()
+            .fg(rgb(t.accent))
+            .add_modifier(starkit::ratatui::style::Modifier::BOLD)
+    } else {
+        Style::default().fg(rgb(t.warn))
+    }
+}
+
 /// A word on a module's header row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Word {

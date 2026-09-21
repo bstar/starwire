@@ -54,8 +54,9 @@ pub struct View<'a> {
     /// the crumb row above the list when it is open.
     pub crumb: String,
     pub loading: bool,
-    /// The live `/` filter, drawn at the right of the crumb row.
-    pub filter: Option<&'a str>,
+    /// The `/` filter, drawn at the right of the crumb row -- see
+    /// [`super::Filter`] for what the field being open changes about it.
+    pub filter: Option<super::Filter<'a>>,
     /// What an empty list says. `choose a source` before anything has been
     /// opened, `nothing here` for a source that has nothing in it.
     pub empty: &'a str,
@@ -216,7 +217,7 @@ pub fn render(area: Rect, buf: &mut Buffer, v: &View<'_>, bars: &mut Bars) {
 }
 
 fn render_crumb(area: Rect, buf: &mut Buffer, t: &Theme, v: &View<'_>) {
-    let right = v.filter.map(|f| format!("/{f}")).unwrap_or_default();
+    let right = v.filter.map(|f| format!("/{}", f.text)).unwrap_or_default();
     let right_w = width_of(&right).min(area.width);
     let left_w = area.width.saturating_sub(right_w + 1);
     buf.set_string(
@@ -230,7 +231,7 @@ fn render_crumb(area: Rect, buf: &mut Buffer, t: &Theme, v: &View<'_>) {
             area.x + area.width - right_w,
             area.y,
             right,
-            Style::default().fg(rgb(t.warn)),
+            super::filter_style(t, v.filter.is_some_and(|f| f.typing)),
         );
     }
 }

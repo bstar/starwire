@@ -100,6 +100,10 @@ pub struct Frame {
     /// url, an entry's guid, whatever the panel that built the rows keyed
     /// them by.
     pub cursor_key: Option<String>,
+    /// The `/` filter on this frame's own rows, kept here so a level jumped
+    /// away from comes back narrowed the way it was left. SOURCES is what
+    /// uses it: the ENTRIES filter is the core's, because there it decides
+    /// which of the loaded rows are visible at all.
     pub filter: String,
     /// The topmost row drawn, so paging remembers where the view was
     /// scrolled to rather than re-centring on the cursor every frame. In the

@@ -117,15 +117,24 @@ impl App {
     /// guard is dropped before anything else runs -- see the module doc.
     pub(super) fn refresh(&mut self) {
         let stack_now = self.stack_stamp();
+        // The SOURCES filter is the window's own, so typing into it moves
+        // neither the core's version nor the stack; it is part of what says
+        // the rows have to be built again.
+        let filter_now = self.filter_text(ModuleId::Sources).to_string();
         {
             let state = self.core.state();
-            if state.version == self.seen_version && stack_now == self.seen_stack {
+            if state.version == self.seen_version
+                && stack_now == self.seen_stack
+                && filter_now == self.seen_source_filter
+            {
                 return;
             }
             self.seen_version = state.version;
             self.seen_stack = stack_now;
+            self.seen_source_filter = filter_now.clone();
 
             let (source_rows, source_keys) = build_source_rows(&state, self.sources_folder());
+            let (source_rows, source_keys) = narrow_sources(source_rows, source_keys, &filter_now);
             let source_summary = summary(state.feeds.len(), state.unread_total());
             let source_crumbs = self.build_source_crumbs(&state);
 
@@ -348,6 +357,29 @@ pub fn build_source_rows(
     }
 
     (rows, keys)
+}
+
+/// The SOURCES rows the `/` filter leaves, best match first, and their keys
+/// with them so the cursor still opens what it is sitting on.
+///
+/// Pure window work: this narrows rows that have already been built, through
+/// the matcher the ENTRIES filter uses (`wire::search`), and asks the core
+/// for nothing. The special rows are matched by name like everything else --
+/// `/star` finds the starred list the same way `/pho` finds a feed.
+fn narrow_sources(
+    rows: Vec<sources::SourceRow>,
+    keys: Vec<SourceKey>,
+    query: &str,
+) -> (Vec<sources::SourceRow>, Vec<SourceKey>) {
+    if query.trim().is_empty() {
+        return (rows, keys);
+    }
+    let names: Vec<String> = rows.iter().map(|r| r.name.clone()).collect();
+    let order = crate::wire::search::matches(query, &names);
+    (
+        order.iter().map(|&i| rows[i].clone()).collect(),
+        order.iter().map(|&i| keys[i].clone()).collect(),
+    )
 }
 
 fn feed_row(state: &crate::wire::State, feed: &crate::wire::feed::FeedRow) -> sources::SourceRow {

@@ -23,19 +23,6 @@ use super::feed::EntryRow;
 /// what makes clearing the filter with `esc` put the list back exactly as it
 /// was rather than re-sorting it.
 pub fn filter(query: &str, rows: &[EntryRow]) -> Vec<usize> {
-    if query.trim().is_empty() {
-        return (0..rows.len()).collect();
-    }
-
-    let mut matcher = Matcher::new(Config::DEFAULT);
-    let pattern = Pattern::parse(
-        query.trim(),
-        // Smart case, as everywhere else in the family: a lowercase query
-        // matches anything, and typing a capital means you meant it.
-        CaseMatching::Smart,
-        Normalization::Smart,
-    );
-
     // The feed name is part of what is matched, so that typing `phoronix`
     // into the filter on an aggregate list narrows to one source without
     // having to go back and pick it.
@@ -46,6 +33,26 @@ pub fn filter(query: &str, rows: &[EntryRow]) -> Vec<usize> {
             None => format!("{} {}", row.title, row.feed_title),
         })
         .collect();
+    matches(query, &haystacks)
+}
+
+/// The same match, over whatever strings the caller has: the window's
+/// SOURCES list filters its folder and feed names through this, so the two
+/// `/` filters behave identically and there is one matcher configured in
+/// one place.
+pub fn matches(query: &str, haystacks: &[String]) -> Vec<usize> {
+    if query.trim().is_empty() {
+        return (0..haystacks.len()).collect();
+    }
+
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let pattern = Pattern::parse(
+        query.trim(),
+        // Smart case, as everywhere else in the family: a lowercase query
+        // matches anything, and typing a capital means you meant it.
+        CaseMatching::Smart,
+        Normalization::Smart,
+    );
 
     let mut scored: Vec<(u32, usize)> = haystacks
         .iter()
@@ -152,6 +159,19 @@ mod tests {
             filter("PHORONIX", &rows).is_empty(),
             "typing capitals means you meant them"
         );
+    }
+
+    /// The window's SOURCES list comes through here with folder and feed
+    /// names, and gets the same match the entries do.
+    #[test]
+    fn plain_names_match_the_same_way() {
+        let names: Vec<String> = ["All", "Unread", "Tech", "Phoronix", "Hacker News"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(matches("pho", &names), vec![3]);
+        assert_eq!(matches("", &names), vec![0, 1, 2, 3, 4]);
+        assert!(matches("zzzz", &names).is_empty());
     }
 
     #[test]

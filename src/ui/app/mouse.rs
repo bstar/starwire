@@ -247,7 +247,13 @@ impl App {
                 self.focus(ModuleId::Entries);
                 self.act(Action::UnreadOnly);
             }
-            Word::Filter => self.act(Action::Filter),
+            // The word is on the ENTRIES header, so it filters the entries
+            // whatever had the keyboard -- `/` filters the focused list, and
+            // clicking a word is not the same as pressing it.
+            Word::Filter => {
+                self.focus(ModuleId::Entries);
+                self.act(Action::Filter);
+            }
             Word::Star => {
                 self.focus(module);
                 self.act(Action::ToggleStar);

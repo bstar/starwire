@@ -105,7 +105,7 @@ pub struct App {
     stack: Stack,
     overlays: Overlays,
     /// Some while `/` is being typed.
-    filter: Option<TextInput>,
+    filter: Option<Filter>,
     g_pending: bool,
     /// The digits typed since an `o`, while the chord is open.
     o_pending: Option<String>,
@@ -113,6 +113,10 @@ pub struct App {
     view: ViewData,
     seen_version: u64,
     seen_stack: (usize, usize),
+    /// The SOURCES filter the built rows were narrowed by, beside the
+    /// version and the stack stamp for the same reason: it is the third
+    /// thing that changes what those rows are.
+    seen_source_filter: String,
     cache: markdown::cache::Cache,
     /// Where each article was left, keyed by entry so `n` and `p` back and
     /// forth keep every position they have learnt. Seeded from the session
@@ -161,6 +165,17 @@ pub struct App {
     now_override: Option<jiff::Timestamp>,
 }
 
+/// The `/` field while it is open, and the list it is narrowing.
+///
+/// The module is remembered rather than read off the focus because focus can
+/// move out from under a half-typed filter: `alt+1` falls through the field
+/// (see `keymap::filter_eats`), and the letters typed after it still belong
+/// to the list `/` was pressed in.
+struct Filter {
+    module: ModuleId,
+    input: TextInput,
+}
+
 impl App {
     /// Build the window. Never touches the terminal -- see [`Self::run`],
     /// which is the only thing that does.
@@ -196,6 +211,7 @@ impl App {
             o_pending: None,
             note: None,
             view: ViewData::default(),
+            seen_source_filter: String::new(),
             // Never equal to a fresh `State`'s version, so the first
             // `refresh` always copies rather than seeing "nothing changed".
             seen_version: u64::MAX,
@@ -696,6 +712,79 @@ impl App {
         }
     }
 
+    // -- the two filters ----------------------------------------------------
+
+    /// Open the `/` field on the list under the keyboard.
+    ///
+    /// SOURCES narrows where it stands. The reader has no list to narrow --
+    /// finding text inside an article is a different thing and is not this
+    /// -- so `/` there moves to ENTRIES and filters that, which is what
+    /// `keymap.rs`'s header and `docs/the-stack.md` both say it does.
+    fn open_filter(&mut self) {
+        let module = match self.layout.focus() {
+            ModuleId::Sources => ModuleId::Sources,
+            _ => {
+                self.focus(ModuleId::Entries);
+                ModuleId::Entries
+            }
+        };
+        let text = self.filter_text(module).to_string();
+        self.filter = Some(Filter {
+            module,
+            input: TextInput::single().with_text(text),
+        });
+    }
+
+    /// What is narrowing `m`'s list, field open or not.
+    ///
+    /// The two live in different places, and deliberately: ENTRIES' filter
+    /// is the core's, because it decides which of the loaded rows are
+    /// visible and `n`, `p` and the counts all read that; SOURCES' is the
+    /// window's own, on the frame, because nothing in the core knows the
+    /// feed list has been drilled into. So the two are independent -- a
+    /// filter on the feed list does not touch the one on the entries.
+    pub(super) fn filter_text(&self, m: ModuleId) -> &str {
+        match m {
+            ModuleId::Sources => self
+                .frame_of(ModuleId::Sources)
+                .map(|f| f.filter.as_str())
+                .unwrap_or(""),
+            ModuleId::Entries => &self.view.filter,
+            ModuleId::Reader => "",
+        }
+    }
+
+    fn set_filter(&mut self, m: ModuleId, text: String) {
+        match m {
+            ModuleId::Sources => {
+                if let Some(i) = self.stack.top_of(ModuleId::Sources) {
+                    self.stack
+                        .frames_mut()
+                        .nth(i)
+                        .expect("the frame is there")
+                        .filter = text;
+                }
+            }
+            ModuleId::Entries => self.core.send(Command::Filter(text)),
+            ModuleId::Reader => {}
+        }
+    }
+
+    pub(super) fn clear_filter(&mut self, m: ModuleId) {
+        match m {
+            ModuleId::Entries => self.core.send(Command::ClearFilter),
+            _ => self.set_filter(m, String::new()),
+        }
+    }
+
+    /// The text in the open field, when the field belongs to `m`.
+    pub(super) fn filter_field(&self, m: ModuleId) -> Option<&str> {
+        self.filter
+            .as_ref()
+            .filter(|f| f.module == m)
+            .map(|f| f.input.text())
+    }
+
     // -- opening things -----------------------------------------------------
 
     /// `enter` or a double-click on whatever the focused module is showing.
@@ -890,9 +979,16 @@ impl App {
             Action::End => self.move_to_edge(false),
             Action::Activate => self.activate(),
             Action::Back => {
-                if self.filter.is_some() {
-                    self.filter = None;
-                    self.core.send(Command::ClearFilter);
+                // The field first, then a filter that was kept with `enter`
+                // and is still narrowing the list -- which is the state the
+                // status row's `esc clear filter` is about.
+                if let Some(f) = self.filter.take() {
+                    self.clear_filter(f.module);
+                } else {
+                    let m = self.layout.focus();
+                    if !self.filter_text(m).is_empty() {
+                        self.clear_filter(m);
+                    }
                 }
                 self.o_pending = None;
                 self.g_pending = false;
@@ -920,10 +1016,7 @@ impl App {
             }
 
             Action::Search => self.open_search(),
-            Action::Filter => {
-                self.filter = Some(TextInput::single().with_text(self.view.filter.clone()));
-                self.focus(ModuleId::Entries);
-            }
+            Action::Filter => self.open_filter(),
 
             Action::RefreshSource => self.refresh_source(),
             Action::RemoveFeed => self.confirm_remove_feed(),
@@ -1852,6 +1945,56 @@ mod tests {
         app.key(code(KeyCode::Esc));
         settle(&mut app, &mut fk);
         assert_eq!(app.view.filter, "");
+    }
+
+    /// `/` narrows the list under the keyboard rather than always the
+    /// entries: in SOURCES the feed list itself, with the keyboard still on
+    /// it and `enter` opening what is left.
+    #[test]
+    fn slash_filters_the_focused_list() {
+        let (mut app, mut fk, _dir) = app();
+        let all = app.view.source_rows.len();
+        assert!(all > 1, "the fixture has a feed list");
+
+        app.key(key('/'));
+        for c in "phoronix".chars() {
+            app.key(key(c));
+        }
+        settle(&mut app, &mut fk);
+        assert_eq!(
+            app.layout.focus(),
+            ModuleId::Sources,
+            "the keyboard stayed on the list being filtered"
+        );
+        assert!(app.view.source_rows.len() < all, "the rows narrowed");
+        assert!(
+            app.view
+                .source_rows
+                .iter()
+                .all(|r| r.name.contains("Phoronix")),
+            "{:?}",
+            app.view
+                .source_rows
+                .iter()
+                .map(|r| &r.name)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(app.view.filter, "", "the entries filter was left alone");
+
+        // `enter` keeps the filter and puts the field away; a second one
+        // opens the row the cursor is on, filtered list and all.
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.filter_text(ModuleId::Sources), "phoronix");
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        assert!(matches!(app.active_source(), Some((Selection::Feed(_), _))));
+
+        // `esc` puts every row back.
+        app.focus(ModuleId::Sources);
+        app.key(code(KeyCode::Esc));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.view.source_rows.len(), all);
     }
 
     /// The `o` chord: a digit that cannot grow opens at once, `oo` is the

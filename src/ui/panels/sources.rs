@@ -84,8 +84,10 @@ pub struct View<'a> {
     pub rows: &'a [SourceRow],
     pub cursor: usize,
     pub scroll: usize,
-    /// The right-hand end of the crumb line: `41 feeds · 312 unread`.
+    /// The right-hand end of the crumb line: `41 feeds · 312 unread`, or
+    /// the `/` filter while one is on -- see [`render_crumbs`].
     pub summary: String,
+    pub filter: Option<super::Filter<'a>>,
     pub loading: bool,
 }
 
@@ -227,10 +229,21 @@ pub fn render(area: Rect, buf: &mut Buffer, v: &View<'_>, bars: &mut Bars) {
     );
 }
 
+/// The crumbs, and at the right either the summary or the `/` filter.
+///
+/// The filter takes the summary's place rather than sitting beside it: at
+/// the sixty-column floor there is room for one of them, and while a list is
+/// narrowed the thing worth saying is what narrowed it -- the feed count is
+/// the same number it was a moment ago. It is where the ENTRIES list draws
+/// its own filter, so the two read alike.
 fn render_crumbs(area: Rect, buf: &mut Buffer, t: &Theme, v: &View<'_>) {
     let (line, _) = crumb_layout(area.x, v.crumbs, trailing(v));
-    let right = &v.summary;
-    let right_w = width_of(right).min(area.width);
+    let filtering = v.filter.is_some();
+    let right = match v.filter {
+        Some(f) => format!("/{}", f.text),
+        None => v.summary.clone(),
+    };
+    let right_w = width_of(&right).min(area.width);
     let left_w = area.width.saturating_sub(right_w + 1);
     buf.set_string(
         area.x,
@@ -239,11 +252,16 @@ fn render_crumbs(area: Rect, buf: &mut Buffer, t: &Theme, v: &View<'_>) {
         Style::default().fg(rgb(t.accent)),
     );
     if right_w > 0 {
+        let style = if filtering {
+            super::filter_style(t, v.filter.is_some_and(|f| f.typing))
+        } else {
+            Style::default().fg(rgb(t.dim))
+        };
         buf.set_string(
             area.x + area.width - right_w,
             area.y,
-            fit(right, right_w),
-            Style::default().fg(rgb(t.dim)),
+            fit(&right, right_w),
+            style,
         );
     }
 }
@@ -417,6 +435,7 @@ mod tests {
             cursor: 2,
             scroll: 0,
             summary: "41 feeds \u{b7} 312 unread".into(),
+            filter: None,
             loading: false,
         }
     }
@@ -511,6 +530,42 @@ mod tests {
         render(area, &mut buf, &v, &mut Bars::new());
         let text = dump(&buf, area);
         assert!(text.contains("Phoronix  timed out"), "{text}");
+    }
+
+    /// The `/` filter takes the summary's place, and says which of its two
+    /// states it is in with the colour: the accent while the field is open,
+    /// so the row reads as a mode, and `warn` for one merely still on.
+    #[test]
+    fn a_filter_replaces_the_summary_and_says_it_is_a_mode() {
+        let t = theme("terminal");
+        let rows = rows();
+        let area = Rect::new(0, 0, 60, 12);
+        let crumbs = split(frame::body(area, &words(ModuleId::Sources)), false).crumbs;
+        for (typing, want) in [(true, rgb(t.accent)), (false, rgb(t.warn))] {
+            let v = View {
+                filter: Some(crate::ui::panels::Filter {
+                    text: "pho",
+                    typing,
+                }),
+                ..view(&t, &rows, false)
+            };
+            let mut buf = Buffer::empty(area);
+            render(area, &mut buf, &v, &mut Bars::new());
+            let text = dump(&buf, area);
+            assert!(text.contains("/pho"), "{typing}: {text}");
+            assert!(!text.contains("312 unread"), "{typing}: {text}");
+
+            let x = (0..area.width)
+                .find(|x| buf[(*x, crumbs.y)].symbol() == "/")
+                .expect("the filter is on the crumb row");
+            let cell = &buf[(x, crumbs.y)];
+            assert_eq!(cell.style().fg, Some(want), "{typing}");
+            assert_eq!(
+                cell.style().add_modifier.contains(Modifier::BOLD),
+                typing,
+                "{typing}"
+            );
+        }
     }
 
     #[test]
