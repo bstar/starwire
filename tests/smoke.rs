@@ -311,6 +311,42 @@ fn an_entry_whose_page_is_not_pulled_still_reads_as_what_the_feed_carried() {
     assert!(markdown.contains("Points: 212"), "{markdown}");
 }
 
+/// The whole of WP-7's first item, through the binary: a page that does not
+/// yield leaves the entry readable, and `show` prints both the feed's text and
+/// the reason the page gave nothing.
+#[test]
+fn an_entry_whose_page_does_not_yield_shows_the_feeds_text_and_the_reason() {
+    let home = home();
+    let replay = testdata("replay");
+    stdout(
+        home.path(),
+        &["--replay", replay.to_str().unwrap(), "fetch"],
+    );
+
+    let listed = stdout(home.path(), &["list", "--limit", "200"]);
+    let line = listed
+        .lines()
+        .find(|l| l.contains("A page that will not give up an article"))
+        .unwrap_or_else(|| panic!("{listed}"));
+    let id = line.split_whitespace().next().expect("an entry id");
+
+    let shown = stdout(home.path(), &["show", id]);
+    assert!(shown.contains("failed"), "the status word: {shown}");
+    assert!(
+        shown.contains("does not read like an article"),
+        "the reason the reader's banner will draw: {shown}"
+    );
+    assert!(
+        shown.contains("Two sentences, and a link to the rest."),
+        "the feed's own text, which is what there is to read: {shown}"
+    );
+
+    // And the pipe-friendly format is that text on its own.
+    let markdown = stdout(home.path(), &["show", id, "--markdown"]);
+    assert!(markdown.contains("Two sentences"), "{markdown}");
+    assert!(!markdown.contains("failed"), "{markdown}");
+}
+
 #[test]
 fn a_replay_run_marks_a_video_as_a_video_and_never_fetches_it() {
     let home = home();

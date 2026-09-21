@@ -817,6 +817,61 @@ mod tests {
         assert!(got.contains("two\\\nlines."), "{got:?}");
     }
 
+    /// The page follower against the real thing, because a fixture cannot
+    /// say whether Phoronix still spells its pagination the way it did.
+    ///
+    /// Counts the requests rather than the bytes: the length of a review is
+    /// whatever was benchmarked that week, and the claim being tested is that
+    /// more than one page was fetched and joined.
+    #[test]
+    fn a_real_review_is_fetched_a_page_at_a_time() {
+        if std::env::var_os("STARWIRE_TEST_NET").is_none() {
+            return;
+        }
+
+        /// One `Http` wrapped in a count of how many times it was asked.
+        struct Counting {
+            inner: crate::wire::net::Live,
+            count: std::sync::atomic::AtomicUsize,
+        }
+        impl crate::wire::net::Http for Counting {
+            fn get(
+                &self,
+                url: &Url,
+                options: &RequestOptions,
+            ) -> Result<crate::wire::net::Response, crate::wire::net::NetError> {
+                self.count
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.inner.get(url, options)
+            }
+        }
+
+        let cfg = crate::wire::WireConfig::default();
+        let http = Counting {
+            inner: crate::wire::net::Live::new(&cfg),
+            count: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let got = run(
+            &http,
+            "https://www.phoronix.com/review/linux-618-73-amd-epyc",
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(got.status, ArticleStatus::Extracted, "{:?}", got.error);
+        let requests = http.count.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(requests >= 3, "only {requests} pages were fetched");
+        let md = got.markdown.unwrap();
+        assert!(
+            md.len() > 8_000,
+            "{} bytes across {requests} pages",
+            md.len()
+        );
+        assert!(
+            !md.contains("/assets/categories/"),
+            "the category badge came with it"
+        );
+    }
+
     #[test]
     fn the_limits_come_from_the_config_rather_than_from_a_second_set_of_numbers() {
         let cfg = super::super::ArticlesConfig {
