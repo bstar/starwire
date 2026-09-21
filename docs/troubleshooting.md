@@ -103,6 +103,12 @@ A `429`, a `5xx` or a timeout comes round again by itself, after
 Either way an entry is tried at most three times ever, and `e` in the reader
 forces another attempt now.
 
+Upgrading to 0.0.2 marks the ones already in your database due as well —
+0.0.1 had no way to tell a bad minute from a paywall and recorded every
+failure as final — so the first refresh after the upgrade tries those again
+too. In the reference database that was twenty-four entries out of
+ninety-three.
+
 Some entries are never extracted on purpose: videos, Reddit posts, and Hacker
 News items that link back into the comment thread. [Reading](reading.md) says
 why.
