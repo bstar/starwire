@@ -3,12 +3,13 @@
 ## The log
 
 ```
-~/.local/starwire/cache/
+~/.local/starwire/cache/starwire.log
 ```
 
-One file per run, rotated. `starwire --verbose <anything>` logs at debug
-level. Nothing is ever logged to the terminal — stdout belongs to the
-subcommands' output and, later, to the window.
+One file, appended to across runs, and safe to delete: it is under `cache/`
+because nothing in it cannot be lost. `starwire --verbose <anything>` logs at
+debug level. Nothing is ever logged to the terminal — stdout belongs to the
+subcommands' output, and to the window when the window has it.
 
 ## A feed is not updating
 
@@ -35,11 +36,33 @@ A few errors mean particular things:
   STAR/WIRE sends no credentials and has no way to.
 - **`429`** — too many requests. Raise `[fetch] min_host_interval_secs`, or
   lower `[fetch] refresh_minutes`. Reddit is the usual source of these.
+- **`not a feed (HTML page; the site may be rate limiting)`** — a 200, but
+  what came back was a web page. See Reddit, below.
 - **`the body is not a feed`** — what came back parsed as neither RSS, Atom
-  nor JSON Feed. Often an HTML error page served with a 200.
+  nor JSON Feed, and did not look like a web page either.
 - **`this reads feeds over https, not http`** — the address could not be
   rewritten. Everything here is https by design; see
   [Reading](reading.md#how-polite-this-is).
+
+## Reddit
+
+Reddit rate limits a feed reader hard, and it does not always say so with a
+`429`. Asked too often, `old.reddit.com/r/<sub>/.rss` answers **200 with an
+HTML page** — its own "take a break" page — rather than the feed. STAR/WIRE
+recognises that and records it as `not a feed (HTML page; the site may be
+rate limiting)`, which is worth telling apart from a broken feed: the feed is
+fine, and the answer is to ask less often.
+
+- Raise `[fetch] min_host_interval_secs`. Every `old.reddit.com` feed shares
+  one host, so five subreddits at a two-second gap are five requests in ten
+  seconds.
+- Raise `[fetch] refresh_minutes`.
+- Leave it alone for a while. The failure earns the ordinary backoff, which
+  doubles to a ceiling of a day, so a rate-limited feed already slows itself
+  down.
+
+Reddit posts are never scraped in any case — the feed carries the body, and
+the link goes to a comment thread. [Reading](reading.md) says why.
 
 ## An article shows only the feed's two sentences
 
@@ -104,7 +127,7 @@ Google Takeout export needs no cookies at all and is more complete; see
 ## The database
 
 ```
-~/.local/starwire/data/wire.db
+~/.local/starwire/wire.db
 ```
 
 It is ordinary SQLite, in WAL mode, and it is safe to read with `sqlite3`

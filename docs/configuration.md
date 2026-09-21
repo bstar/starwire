@@ -67,10 +67,10 @@ browser too.
 `--terminal=no` matters for `mpv`: without it, it takes over the terminal
 STAR/WIRE is drawing in.
 
-This is the one setting the `,` overlay has no row for. It is a list of
+The `,` overlay deliberately has no row for either of these. They are lists of
 strings, and the overlay writes a single scalar to a single line; a row that
 changed the player for the run and forgot it on the next would be worse than
-no row. Edit it here.
+no row. Edit them here.
 
 ## `[youtube]`
 

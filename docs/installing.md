@@ -70,9 +70,10 @@ deleted by moving one folder:
 | Path | What |
 | --- | --- |
 | `config.toml` | the settings |
-| `data/wire.db` | the feeds, the entries and every article ever extracted |
+| `wire.db` | the feeds, the entries and every article ever extracted |
 | `session.toml` | where the reader was when it was last closed |
-| `cache/` | the log |
+| `themes/` | your own themes, if you write any |
+| `cache/` | the log, and nothing that cannot be rebuilt |
 
 `$STARWIRE_DIR` moves all of it. `$STARWIRE_CONFIG_DIR` moves only the
 configuration, which is what a dotfile manager wants.

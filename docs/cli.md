@@ -49,6 +49,17 @@ starwire show 42 --html           # the HTML the feed carried, if any
 starwire show 42 --url            # the link, and nothing else
 ```
 
+The header is the title, who wrote it, the feed, the date, the link, and one
+word for what is stored: `extracted`, `feed text`, `pending` or `failed`. When
+there is no text at all — the page has not been pulled yet, or it failed, or
+the feed carried nothing — the header still prints, and where the article
+would be there is one line saying which of those it was.
+
+**`--markdown` prints nothing and exits 0 when there is no markdown.** That is
+the contract, not an oversight: it is the format a script reads, and an empty
+article should be an empty stream rather than a blank line, an apology or a
+failure. Ask `starwire show <id>` without the flag when you want to know why.
+
 ## Subscribing
 
 ```sh
@@ -70,6 +81,7 @@ starwire import newsboat --dry-run          # print the plan, write nothing
 starwire import newsboat                    # ~/.config/newsboat/urls, and the cache
 starwire import newsboat --urls PATH --cache PATH
 starwire import opml blogroll.opml
+starwire import opml blogroll.opml --dry-run
 starwire export opml                        # to stdout
 starwire export opml subscriptions.opml
 ```
@@ -94,6 +106,8 @@ starwire youtube import-takeout subscriptions.csv
 starwire youtube sync --cookies-from-browser firefox
 starwire youtube list
 ```
+
+`import-takeout` and `sync` both take `--dry-run`.
 
 [YouTube](youtube.md) covers what each of those does and what it needs.
 
