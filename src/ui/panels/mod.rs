@@ -3,13 +3,16 @@
 //! A module is a pure widget over a small view struct, as in STAR/FOLD and
 //! STAR/CORD. Three of them here, in the order a feed list is drilled
 //! through: the sources, the entries of whichever source is chosen, and the
-//! article. `pub mod sources; pub mod entries; pub mod reader;` are a later
-//! work package's files and are deliberately not declared yet.
+//! article.
 //!
 //! The reader is a *module*, not a level of the stack, which is what makes
 //! `n` and `p` able to replace the article in place without the frame ids
 //! churning -- see `ui/stack.rs`. It folds like the two lists do, to a line
 //! that says what is open in it.
+
+pub mod entries;
+pub mod reader;
+pub mod sources;
 
 use std::borrow::Cow;
 

@@ -1,9 +1,10 @@
 //! The window.
 //!
-//! **Half a stub.** The foundations are here -- the stack, the layout
-//! arithmetic, the key table, the reader's markdown pipeline and the theme
-//! roles -- and the application that draws with them lands in a later work
-//! package; [`run`] still says so and exits cleanly.
+//! [`run`] takes the terminal, builds an [`app::App`] over the running core
+//! and draws until something says to stop. The column is three docked
+//! modules -- the sources, the entries of whichever source is chosen, and
+//! the article -- over a status row; `docs/the-stack.md` describes how they
+//! move and `ui/app/mod.rs` has the frame's own order.
 //!
 //! Everything under here reaches the four terminal crates -- the widget
 //! library, the terminal driver, and the two halves of the image pipeline --
@@ -18,7 +19,6 @@
 //! `wire::Handle` and the read side of `wire::State`, and nothing in
 //! `src/wire/` knows it exists.
 
-use std::io::Write as _;
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -27,38 +27,42 @@ pub mod clipboard;
 pub mod keymap;
 pub mod layout;
 pub mod markdown;
+// pub mod overlays;
 pub mod panels;
 pub mod stack;
+// pub mod status;
 pub mod theme;
 
-/// Say what is and is not here, and exit 0.
+/// One key per scrollbar the window can draw, shared with STAR/KIT's
+/// `chrome::scrollbar::Scrollbars` so [`app::App`] can keep a single
+/// instance that presses, drags and releases whichever bar the pointer is
+/// over -- one of the three modules, or the one overlay tall enough to
+/// scroll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bar {
+    Sources,
+    Entries,
+    Reader,
+    Help,
+    Import,
+}
+
+/// The one `Scrollbars` every module records its bar with and the app's
+/// mouse handling reads back, keyed by [`Bar`].
+pub type Bars = starkit::chrome::scrollbar::Scrollbars<Bar>;
+
+/// Take over the terminal and read the news.
 ///
-/// The signature is the one the real window will have -- the core, the
-/// config as it was read, where it was read from, and where the session
-/// belongs -- so that `main` will not change when the window arrives.
-///
-/// Exit 0 rather than 1 deliberately: nothing has gone wrong. The program is
-/// installed, its config and its database are where they should be, the core
-/// is running, and the headless half of it works. A non-zero exit would tell
-/// a packaging test that the build is broken when it is not.
+/// The signature is the one the stub had -- the core, the config as it was
+/// read, where it was read from, and where the session belongs -- because
+/// `main` was written against it before this existed.
 pub fn run(
     core: crate::wire::Handle,
     cfg: crate::config::Config,
     cfg_path: PathBuf,
     session_path: Option<PathBuf>,
 ) -> Result<()> {
-    let _ = (&cfg, &cfg_path, &session_path);
-    let feeds = core.state().feeds.len();
-    let mut out = std::io::stdout().lock();
-    let _ = writeln!(
-        out,
-        "STAR/WIRE {}: the TUI lands in a later package. \
-         The core is running: {feeds} feed{}, config at {}. \
-         `starwire --help` has the rest.",
-        env!("CARGO_PKG_VERSION"),
-        if feeds == 1 { "" } else { "s" },
-        cfg_path.display()
-    );
+    let _ = (core, cfg, cfg_path, session_path);
     Ok(())
 }
 
