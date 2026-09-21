@@ -23,6 +23,7 @@ use std::path::Path;
 use anyhow::Result;
 
 pub mod keymap;
+pub mod panels;
 
 /// Say what is and is not here, and exit 0.
 ///
