@@ -165,7 +165,7 @@ impl App {
             theme: &self.theme,
             focused: self.layout.focus() == ModuleId::Reader,
             folded: !self.layout.is_open(ModuleId::Reader),
-            title: article.map(|a| a.title.as_str()).unwrap_or(""),
+            title: self.head_title.as_str(),
             byline: self.byline_text.as_deref(),
             kind,
             status: article.map(|a| a.status).unwrap_or(ArticleStatus::Pending),
@@ -311,12 +311,12 @@ impl App {
                         .scroll = to;
                 }
                 ModuleId::Reader => {
-                    let Some(id) = self.open_article() else {
+                    let (Some(id), Some(total)) = (self.open_article(), self.rendered_height())
+                    else {
                         continue;
                     };
                     let body = header::body(rect);
                     let height = usize::from(body.height).max(1);
-                    let total = self.last_height;
                     let max = total.saturating_sub(height);
                     let at = self.reader_scroll_of(id).min(max);
                     self.reader_scroll.insert(id, at);

@@ -135,12 +135,19 @@ pub struct App {
     /// How many links the article on screen numbers, which is what the `o`
     /// chord counts against. Set by `draw`, read by the next key press.
     links: u16,
-    /// How tall the article was laid out for the width last drawn, for
-    /// clamping the scroll and for `G`.
-    last_height: usize,
+    /// Which article was last laid out, and how tall it came to at the
+    /// width it was drawn at -- for clamping its scroll and for `G`.
+    ///
+    /// The entry is carried with the height because `n` swaps the article
+    /// under the reader a frame before the next draw measures the new one:
+    /// clamping the article that is now open against the height of the one
+    /// that was would throw away the position `p` is about to come back to.
+    last_render: Option<(EntryId, usize)>,
     /// Three lines derived once a frame in `tick`, so `draw` and the mouse's
     /// own status hit test read the same strings.
     byline_text: Option<String>,
+    /// The headline drawn above the article -- see [`head_title`].
+    head_title: String,
     progress_line: Option<String>,
     right_line: String,
     /// Throw away what the diff believes is on the screen next frame -- an
@@ -204,8 +211,9 @@ impl App {
             spinner: 0,
             started: Instant::now(),
             links: 0,
-            last_height: 0,
+            last_render: None,
             byline_text: None,
+            head_title: String::new(),
             progress_line: None,
             right_line: String::new(),
             repaint: true,
@@ -216,6 +224,7 @@ impl App {
         };
         app.restore(session);
         app.refresh();
+        app.point_at_restored_source();
         app.open_import_offer();
         app.sync_core();
         app
@@ -241,6 +250,26 @@ impl App {
         }
         self.layout.focus_set(self.stack.active().level.module());
         self.session = session;
+    }
+
+    /// Put the SOURCES cursor on the row the restored selection names, when
+    /// there is one at the root.
+    ///
+    /// Without this a restored session draws `▸ sources › All` over a list
+    /// of somebody else's feed, which is true -- the cursor really is on
+    /// `All` -- and reads as wrong.
+    fn point_at_restored_source(&mut self) {
+        let Some((source, _)) = self.active_source() else {
+            return;
+        };
+        let at = self
+            .view
+            .source_keys
+            .iter()
+            .position(|key| key.selection().as_ref() == Some(&source));
+        if let Some(at) = at {
+            self.set_cursor(ModuleId::Sources, at);
+        }
     }
 
     /// Offer the import, if the core says there is one to offer.
@@ -378,6 +407,10 @@ impl App {
         self.sync_core();
         self.refresh();
         self.after_refresh();
+        self.head_title = match (self.open_article(), self.view.article.as_ref()) {
+            (Some(id), Some(a)) if a.entry == id => head_title(&a.markdown, &a.title),
+            _ => String::new(),
+        };
         self.byline_text = self.byline();
         self.progress_line = self.build_progress_line();
         self.right_line = self.build_right_line();
@@ -535,6 +568,17 @@ impl App {
         Some(self.view.entry_rows[i].kind)
     }
 
+    /// How tall the open article came to, if that is what was last laid
+    /// out. `None` before the first draw, and between `n` and the draw that
+    /// measures what it opened.
+    pub(super) fn rendered_height(&self) -> Option<usize> {
+        let open = self.open_article()?;
+        match self.last_render {
+            Some((entry, height)) if entry == open => Some(height),
+            _ => None,
+        }
+    }
+
     pub(super) fn now(&self) -> jiff::Timestamp {
         self.now_override.unwrap_or_else(jiff::Timestamp::now)
     }
@@ -609,7 +653,11 @@ impl App {
     fn move_to_edge(&mut self, top: bool) {
         let m = self.layout.focus();
         if m == ModuleId::Reader {
-            let to = if top { 0 } else { self.last_height };
+            let to = if top {
+                0
+            } else {
+                self.rendered_height().unwrap_or(0)
+            };
             self.set_reader_scroll(to);
             return;
         }
@@ -1327,7 +1375,7 @@ impl App {
                 },
             )
         });
-        self.last_height = rendered.lines.len();
+        self.last_render = Some((article.entry, rendered.lines.len()));
         Some(rendered)
     }
 
@@ -1346,7 +1394,17 @@ impl App {
         }
         if let Some(at) = self.view.open_published {
             let zoned = at.to_zoned(self.tz.clone());
-            parts.push(zoned.strftime("%-d %b %Y").to_string());
+            let date = zoned.strftime("%-d %b %Y").to_string();
+            // Readability's byline is whatever the page put under the
+            // headline, and on a news site that is usually "by Somebody, 20
+            // September 2026". Printing our own date after it says the same
+            // thing twice in two formats, so the year is what decides: a
+            // byline that already carries this article's year has a date in
+            // it.
+            let year = zoned.strftime("%Y").to_string();
+            if !a.byline.as_deref().is_some_and(|b| b.contains(&year)) {
+                parts.push(date);
+            }
         }
         let words = a.markdown.split_whitespace().count();
         if words > 0 {
@@ -1411,19 +1469,63 @@ impl App {
 /// Take the article's own opening heading off when it says what the panel
 /// has already written above it.
 ///
-/// Readability keeps the `<h1>` in the body and also reports it as the
-/// title, so a real extraction usually carries the headline twice; the
-/// reader drew it twice before this. Only the *first* block, only an `h1`,
-/// and only when the words match once case and punctuation spacing are set
-/// aside -- a second heading further down is part of the article.
+/// Readability keeps the `<h1>` in the body *and* reports it as the title,
+/// so a real extraction carries the headline twice -- and the two spellings
+/// are often not identical: the stored title is frequently the `<title>`
+/// tag, which is the headline without its subtitle. So [`same_headline`]
+/// accepts a prefix either way, and the reader draws whichever of the two is
+/// the fuller ([`head_title`]).
+///
+/// Only the *first* block, and only a heading at the top two levels: a page
+/// that puts its own name in the `h1` leaves the headline as an `h2`, which
+/// is what `testdata/pages/article.html` does and what the first real run
+/// against `blog.rust-lang.org` did. A heading further down is part of the
+/// article whatever it says.
 fn drop_repeated_title(doc: &mut markdown::parse::Doc, title: &str) {
-    let Some(markdown::parse::Block::Heading { level: 1, inlines }) = doc.blocks.first() else {
+    let Some(markdown::parse::Block::Heading { level, inlines }) = doc.blocks.first() else {
         return;
     };
+    if *level > 2 {
+        return;
+    }
     let heading: String = inlines.iter().map(|i| i.text.as_str()).collect();
-    if squash(&heading) == squash(title) {
+    if same_headline(&heading, title) {
         doc.blocks.remove(0);
     }
+}
+
+/// The headline to draw above the article: the article's own opening `h1`
+/// when it is the fuller spelling of the stored title, and the stored title
+/// otherwise.
+///
+/// A line scan rather than a parse: this runs every frame, and the answer
+/// only ever depends on the first non-blank line.
+pub(super) fn head_title(markdown: &str, title: &str) -> String {
+    let Some(first) = markdown.lines().find(|l| !l.trim().is_empty()) else {
+        return title.to_string();
+    };
+    let trimmed = first.trim();
+    let Some(heading) = trimmed
+        .strip_prefix("# ")
+        .or_else(|| trimmed.strip_prefix("## "))
+    else {
+        return title.to_string();
+    };
+    let heading = heading.trim();
+    if same_headline(heading, title) && squash(heading).len() > squash(title).len() {
+        return heading.to_string();
+    }
+    title.to_string()
+}
+
+/// Whether two spellings of a headline are the same headline: equal, or one
+/// the beginning of the other.
+fn same_headline(a: &str, b: &str) -> bool {
+    let (a, b) = (squash(a), squash(b));
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    a.starts_with(&b) || b.starts_with(&a)
 }
 
 /// Lower-cased with every run of whitespace reduced to one space, which is
@@ -1433,4 +1535,546 @@ fn squash(text: &str) -> String {
         .map(|w| w.to_lowercase())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::fake;
+    use crate::ui::overlays::Overlay;
+    use starkit::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+    use starkit::ratatui::buffer::Buffer;
+    use starkit::ratatui::layout::Rect;
+
+    fn key(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    fn code(c: KeyCode) -> KeyEvent {
+        KeyEvent::new(c, KeyModifiers::NONE)
+    }
+
+    fn alt(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT)
+    }
+
+    /// An app over the fixture, in a fresh directory of its own so a test
+    /// that writes a setting writes it there and nowhere near a real config.
+    fn app() -> (App, fake::Fake, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let cfg = Config::default();
+        let (core, mut fk) = fake::handle(&cfg.core());
+        let mut app = App::new(
+            core,
+            cfg,
+            dir.path().join("config.toml"),
+            None,
+            Graphics::disabled(),
+        );
+        app.set_now(crate::wire::testing::now());
+        settle(&mut app, &mut fk);
+        (app, fk, dir)
+    }
+
+    fn settle(app: &mut App, fk: &mut fake::Fake) {
+        for _ in 0..3 {
+            app.tick();
+            fk.pump();
+        }
+        app.tick();
+    }
+
+    /// Draw once, so `layout.last` exists and the panels' geometry is known
+    /// -- a click and a page key both read it.
+    fn draw(app: &mut App) -> String {
+        let area = Rect::new(0, 0, 100, 30);
+        let mut buf = Buffer::empty(area);
+        app.draw(area, &mut buf);
+        (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn source_row(app: &App, needle: &str) -> usize {
+        app.view
+            .source_rows
+            .iter()
+            .position(|r| r.name.contains(needle))
+            .unwrap_or_else(|| panic!("no source row holding {needle}"))
+    }
+
+    fn goto_source(app: &mut App, fk: &mut fake::Fake, needle: &str) {
+        app.key(code(KeyCode::Home));
+        settle(app, fk);
+        for _ in 0..source_row(app, needle) {
+            app.key(key('j'));
+        }
+        settle(app, fk);
+    }
+
+    fn into_feed(app: &mut App, fk: &mut fake::Fake, folder: &str, feed: &str) {
+        goto_source(app, fk, folder);
+        app.key(key('l'));
+        settle(app, fk);
+        goto_source(app, fk, feed);
+        app.key(code(KeyCode::Enter));
+        settle(app, fk);
+    }
+
+    #[test]
+    fn a_new_app_draws_the_heading_the_fixture_and_the_help_hint() {
+        let (mut app, _fk, _dir) = app();
+        let text = draw(&mut app);
+        assert!(text.contains("S T A R / W I R E"), "{text}");
+        assert!(
+            text.contains("Hacker News") || text.contains("Tech"),
+            "{text}"
+        );
+        assert!(text.contains("? help"), "{text}");
+    }
+
+    /// The column only ever goes down, and focus follows the stack.
+    #[test]
+    fn drilling_into_a_folder_then_a_feed_walks_the_column_down() {
+        let (mut app, mut fk, _dir) = app();
+        assert_eq!(app.layout.focus(), ModuleId::Sources);
+        goto_source(&mut app, &mut fk, "Tech");
+        app.key(key('l'));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.layout.focus(), ModuleId::Sources, "a folder is sources");
+        assert_eq!(app.stack.len(), 2);
+
+        goto_source(&mut app, &mut fk, "Hacker News");
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.layout.focus(), ModuleId::Entries);
+        assert!(matches!(
+            app.active_source(),
+            Some((Selection::Feed(_), false))
+        ));
+        assert_eq!(app.view.entry_rows.len(), 3, "the fixture's HN entries");
+    }
+
+    /// `enter` on a folder reads the whole folder; `l` opens its feeds. Two
+    /// keys, two answers, and `docs/the-stack.md` says which is which.
+    #[test]
+    fn enter_on_a_folder_reads_it_and_l_opens_it() {
+        let (mut app, mut fk, _dir) = app();
+        goto_source(&mut app, &mut fk, "Tech");
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        assert!(matches!(
+            app.active_source(),
+            Some((Selection::Folder(_), _))
+        ));
+    }
+
+    #[test]
+    fn opening_an_entry_marks_it_read_and_esc_closes_it() {
+        let (mut app, mut fk, _dir) = app();
+        into_feed(&mut app, &mut fk, "Tech", "Hacker News");
+        assert!(app.view.entry_read.iter().all(|r| !*r));
+
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.layout.focus(), ModuleId::Reader);
+        assert!(app.open_article().is_some());
+        assert!(app.view.entry_read[0], "opening it marked it read");
+
+        app.key(code(KeyCode::Esc));
+        settle(&mut app, &mut fk);
+        assert!(app.open_article().is_none(), "esc closed the article");
+        assert_eq!(app.layout.focus(), ModuleId::Entries);
+    }
+
+    /// `mark_read_on_open = false` leaves it alone, which is the whole point
+    /// of the key.
+    #[test]
+    fn opening_an_entry_leaves_it_unread_when_the_setting_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.reading.mark_read_on_open = false;
+        let (core, mut fk) = fake::handle(&cfg.core());
+        let mut app = App::new(
+            core,
+            cfg,
+            dir.path().join("config.toml"),
+            None,
+            Graphics::disabled(),
+        );
+        settle(&mut app, &mut fk);
+        into_feed(&mut app, &mut fk, "Tech", "Hacker News");
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        assert!(!app.view.entry_read[0]);
+    }
+
+    /// `n` replaces the article in place rather than pushing a level, which
+    /// is what keeps the frame ids -- and so the reading positions -- alive.
+    #[test]
+    fn n_and_p_replace_the_article_without_growing_the_stack() {
+        let (mut app, mut fk, _dir) = app();
+        into_feed(&mut app, &mut fk, "Tech", "Hacker News");
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        let depth = app.stack.len();
+        let first = app.open_article().expect("an article");
+        let frame = app.stack.active().id;
+
+        app.key(key('n'));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.stack.len(), depth, "the stack did not grow");
+        assert_eq!(app.stack.active().id, frame, "the frame id did not churn");
+        assert_ne!(app.open_article(), Some(first));
+
+        app.key(key('p'));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.open_article(), Some(first));
+    }
+
+    /// The reading position is per entry and survives going away and back.
+    #[test]
+    fn a_reading_position_is_kept_per_entry() {
+        let (mut app, mut fk, _dir) = app();
+        into_feed(&mut app, &mut fk, "Tech", "Hacker News");
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        draw(&mut app);
+        let first = app.open_article().expect("an article");
+
+        for _ in 0..3 {
+            app.key(key('j'));
+        }
+        draw(&mut app);
+        let at = app.reader_scroll_of(first);
+        assert!(at > 0, "the reader scrolled");
+
+        app.key(key('n'));
+        settle(&mut app, &mut fk);
+        draw(&mut app);
+        app.key(key('p'));
+        settle(&mut app, &mut fk);
+        draw(&mut app);
+        assert_eq!(
+            app.reader_scroll_of(first),
+            at,
+            "it came back to where it was"
+        );
+    }
+
+    /// `alt+up` keeps the article's frame, which is what makes the peek a
+    /// peek rather than a close.
+    #[test]
+    fn jumping_up_keeps_the_article_open_behind_the_list() {
+        let (mut app, mut fk, _dir) = app();
+        into_feed(&mut app, &mut fk, "Tech", "Hacker News");
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        let open = app.open_article();
+
+        app.key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.layout.focus(), ModuleId::Entries);
+        assert_eq!(app.open_article(), open, "the article is still there");
+        assert!(app.stack.has_forward());
+
+        app.key(KeyEvent::new(KeyCode::Down, KeyModifiers::ALT));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.layout.focus(), ModuleId::Reader);
+    }
+
+    /// `alt+3` reaches the reader even when its frame is ahead of the active
+    /// one, which is what `Stack::top_of` looking past `active` is for.
+    #[test]
+    fn alt_3_reaches_the_reader_from_the_forward_trail() {
+        let (mut app, mut fk, _dir) = app();
+        into_feed(&mut app, &mut fk, "Tech", "Hacker News");
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        app.key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT));
+        settle(&mut app, &mut fk);
+        app.key(alt('3'));
+        assert_eq!(app.layout.focus(), ModuleId::Reader);
+    }
+
+    #[test]
+    fn a_module_with_no_frame_says_so_rather_than_doing_nothing() {
+        let (mut app, _fk, _dir) = app();
+        app.key(alt('3'));
+        assert_eq!(app.layout.focus(), ModuleId::Sources);
+        assert_eq!(app.note_text(), Some("nothing open"));
+    }
+
+    /// `u` replaces the level rather than pushing one, and the core is told
+    /// about it exactly once.
+    #[test]
+    fn u_toggles_unread_only_in_place() {
+        let (mut app, mut fk, _dir) = app();
+        into_feed(&mut app, &mut fk, "Tech", "Hacker News");
+        let depth = app.stack.len();
+        app.key(key('u'));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.stack.len(), depth);
+        assert!(matches!(app.active_source(), Some((_, true))));
+        assert!(app.core.state().unread_only);
+    }
+
+    /// The `/` field takes typing and leaves `alt+…` alone, which is
+    /// `keymap::filter_eats`' rule seen from the outside.
+    #[test]
+    fn the_filter_takes_typing_and_lets_alt_through() {
+        let (mut app, mut fk, _dir) = app();
+        into_feed(&mut app, &mut fk, "Tech", "Hacker News");
+        app.key(key('/'));
+        for c in "paywall".chars() {
+            app.key(key(c));
+        }
+        settle(&mut app, &mut fk);
+        assert_eq!(app.view.filter, "paywall");
+        assert_eq!(app.view.entry_rows.len(), 1, "the filter narrowed the list");
+
+        // `alt+1` still works with a filter half-typed.
+        app.key(alt('1'));
+        assert_eq!(app.layout.focus(), ModuleId::Sources);
+
+        app.key(code(KeyCode::Esc));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.view.filter, "");
+    }
+
+    /// The `o` chord: a digit that cannot grow opens at once, `oo` is the
+    /// article itself, and `esc` gives up.
+    #[test]
+    fn the_o_chord_waits_only_while_the_number_can_grow() {
+        let (mut app, mut fk, _dir) = app();
+        into_feed(&mut app, &mut fk, "Tech", "Hacker News");
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        draw(&mut app);
+        assert!(
+            app.links >= 2,
+            "the fixture article has links: {}",
+            app.links
+        );
+
+        app.key(key('o'));
+        assert_eq!(app.pending_chord().as_deref(), Some("o"));
+        app.key(key('1'));
+        assert!(app.pending_chord().is_none(), "one link cannot grow past 1");
+        assert_eq!(app.note_text(), Some("opening link 1"));
+
+        app.key(key('o'));
+        app.key(code(KeyCode::Esc));
+        assert!(app.pending_chord().is_none());
+    }
+
+    /// `<` and `>` step the width, clamp, and write the line.
+    #[test]
+    fn the_reading_width_steps_clamps_and_is_saved() {
+        let (mut app, _fk, dir) = app();
+        assert_eq!(app.cfg.reading.width, 80);
+        app.act(Action::Narrower);
+        assert_eq!(app.cfg.reading.width, 72);
+        for _ in 0..20 {
+            app.act(Action::Narrower);
+        }
+        assert_eq!(app.cfg.reading.width, WIDTH_MIN);
+        for _ in 0..40 {
+            app.act(Action::Wider);
+        }
+        assert_eq!(app.cfg.reading.width, WIDTH_MAX);
+
+        let written = std::fs::read_to_string(dir.path().join("config.toml")).expect("a config");
+        assert!(
+            written.contains(&format!("width = {WIDTH_MAX}")),
+            "{written}"
+        );
+        let read: Config = toml::from_str(&written).expect("it parses");
+        assert_eq!(read.reading.width, WIDTH_MAX);
+    }
+
+    /// Cycling the theme bumps the generation, which is what makes every
+    /// laid-out article in the cache a miss.
+    #[test]
+    fn cycling_the_theme_bumps_the_generation_and_saves_the_name() {
+        let (mut app, _fk, dir) = app();
+        let before = (app.theme_gen, app.theme_name.clone());
+        app.act(Action::NextTheme);
+        assert_ne!(app.theme_name, before.1);
+        assert_eq!(app.theme_gen, before.0 + 1);
+        let written = std::fs::read_to_string(dir.path().join("config.toml")).expect("a config");
+        assert!(written.contains(&app.theme_name), "{written}");
+    }
+
+    /// A settings row changes the running program and the file in one step.
+    #[test]
+    fn a_settings_row_writes_and_applies() {
+        let (mut app, _fk, dir) = app();
+        app.key(key(','));
+        assert!(app.overlays.is_open());
+        // Down to `extract articles` and change it.
+        for _ in 0..4 {
+            app.key(code(KeyCode::Down));
+        }
+        app.key(code(KeyCode::Enter));
+        assert!(!app.cfg.articles.extract);
+        assert!(app.overlays.is_open(), "the box stays open");
+        let written = std::fs::read_to_string(dir.path().join("config.toml")).expect("a config");
+        assert!(written.contains("extract = false"), "{written}");
+        assert!(!app.core.state().settings.extract, "and the core was told");
+    }
+
+    /// A search pushes a level and sends it, which is the whole of what a
+    /// search is here.
+    #[test]
+    fn a_search_becomes_a_level_of_the_stack() {
+        let (mut app, mut fk, _dir) = app();
+        app.key(alt('f'));
+        for c in "borrow".chars() {
+            app.key(key(c));
+        }
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        assert!(matches!(
+            app.active_source(),
+            Some((Selection::Search(q), _)) if q == "borrow"
+        ));
+        assert_eq!(app.view.entry_rows.len(), 1, "{:?}", app.view.entry_rows);
+    }
+
+    /// `d` asks first, and saying yes is what removes the feed.
+    #[test]
+    fn removing_a_feed_is_confirmed_before_anything_happens() {
+        let (mut app, mut fk, _dir) = app();
+        goto_source(&mut app, &mut fk, "Phoronix");
+        app.key(key('d'));
+        assert!(matches!(app.overlays.current(), Some(Overlay::Confirm(_))));
+        let before = app.view.feeds_len;
+
+        app.key(key('n'));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.view.feeds_len, before, "no meant no");
+
+        app.key(key('d'));
+        app.key(key('y'));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.view.feeds_len, before - 1);
+    }
+
+    /// A click moves the cursor onto the row the renderer drew there.
+    #[test]
+    fn a_click_lands_on_the_row_under_the_pointer() {
+        let (mut app, mut fk, _dir) = app();
+        draw(&mut app);
+        let regions = app.layout.last.clone().expect("a layout");
+        let rect = regions.rect_of(ModuleId::Sources);
+        let body = starkit::chrome::frame::body(rect, &crate::ui::panels::words(ModuleId::Sources));
+        // The crumb row is the first; the list starts under it.
+        let y = body.y + 1 + 3;
+        app.mouse(MouseEvent {
+            kind: MouseEventKind::Down(starkit::crossterm::event::MouseButton::Left),
+            column: body.x + 3,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        });
+        settle(&mut app, &mut fk);
+        assert_eq!(app.cursor_of(ModuleId::Sources), 3);
+        assert_eq!(app.view.source_rows[3].name, "Videos");
+    }
+
+    /// A headline the article repeats is drawn once, and the fuller of the
+    /// two spellings is the one drawn.
+    #[test]
+    fn a_repeated_headline_is_drawn_once() {
+        assert_eq!(
+            head_title("## A title: and its subtitle\n\nbody\n", "A title"),
+            "A title: and its subtitle"
+        );
+        assert_eq!(head_title("# A title\n\nbody\n", "A title"), "A title");
+        assert_eq!(
+            head_title("# Something else\n\nbody\n", "A title"),
+            "A title",
+            "a heading that is not the headline is left alone"
+        );
+        assert_eq!(head_title("body with no heading\n", "A title"), "A title");
+
+        let mut doc = markdown::parse::parse("## A title: and its subtitle\n\nbody\n");
+        drop_repeated_title(&mut doc, "A title");
+        assert_eq!(doc.blocks.len(), 1, "{doc:?}");
+
+        let mut doc = markdown::parse::parse("### A title\n\nbody\n");
+        drop_repeated_title(&mut doc, "A title");
+        assert_eq!(doc.blocks.len(), 2, "a deeper heading is the article's own");
+    }
+
+    /// The window sends `OpenFeed` when the active ENTRIES frame changes and
+    /// not otherwise -- a frame where nothing moved sends nothing.
+    #[test]
+    fn the_core_is_told_once_per_change_and_not_once_per_frame() {
+        let (mut app, mut fk, _dir) = app();
+        into_feed(&mut app, &mut fk, "Tech", "Hacker News");
+        let sent = app.last_open_feed.clone();
+        let version = app.core.state().version;
+        for _ in 0..5 {
+            app.tick();
+            fk.pump();
+        }
+        assert_eq!(app.last_open_feed, sent);
+        assert_eq!(app.core.state().version, version, "nothing was re-sent");
+    }
+
+    /// Quitting writes the source, the entry and the position, and the next
+    /// start puts them back.
+    #[test]
+    fn the_session_is_written_on_the_way_out_and_read_on_the_way_in() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("session.toml");
+        let cfg = Config::default();
+        let (core, mut fk) = fake::handle(&cfg.core());
+        let mut app = App::new(
+            core,
+            cfg.clone(),
+            dir.path().join("config.toml"),
+            Some(path.clone()),
+            Graphics::disabled(),
+        );
+        settle(&mut app, &mut fk);
+        into_feed(&mut app, &mut fk, "Tech", "Hacker News");
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        draw(&mut app);
+        for _ in 0..4 {
+            app.key(key('j'));
+        }
+        draw(&mut app);
+
+        let entry = app.open_article().expect("an article");
+        let source = app.active_source().expect("a source").0;
+        let at = app.reader_scroll_of(entry);
+        app.save_session();
+
+        let read = crate::session::load(&path);
+        assert_eq!(read.source(), Some(source.clone()));
+        assert_eq!(read.last_entry, Some(entry.0));
+        assert_eq!(read.position(entry), Some(at));
+
+        // And a fresh window over the same session opens where it left off.
+        let (core, mut fk) = fake::handle(&cfg.core());
+        let mut next = App::new(
+            core,
+            cfg,
+            dir.path().join("config.toml"),
+            Some(path),
+            Graphics::disabled(),
+        );
+        settle(&mut next, &mut fk);
+        assert_eq!(next.active_source().map(|(s, _)| s), Some(source));
+        assert_eq!(next.open_article(), Some(entry));
+        assert_eq!(next.reader_scroll_of(entry), at);
+    }
 }
