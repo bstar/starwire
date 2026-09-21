@@ -291,7 +291,13 @@ fn extract_all(
     if queue.is_empty() {
         return Ok(0);
     }
-    let limits = wire::extract::Limits::from(&core.articles);
+    let limits = wire::extract::Limits {
+        // The reader's own refresh interval is what "come back later" means
+        // to them; `Limits::from` cannot know it, because it is a `[fetch]`
+        // key and that is an `[articles]` one.
+        retry_base_secs: core.fetch.refresh_minutes as i64 * 60,
+        ..wire::extract::Limits::from(&core.articles)
+    };
     let (send_result, results) = crossbeam_channel::unbounded();
     let (send_job, jobs) = crossbeam_channel::unbounded();
     for job in queue {
