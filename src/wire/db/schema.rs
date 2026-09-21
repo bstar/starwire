@@ -23,7 +23,7 @@
 
 /// Bumped when the DDL below changes in a way an existing file needs helping
 /// across. `db::migrate` is where that help goes.
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// The same set STAR/AMP opens its index with, for the same reasons.
 ///

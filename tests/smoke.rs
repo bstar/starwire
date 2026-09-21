@@ -268,10 +268,11 @@ fn a_replay_run_fetches_reads_and_prints_the_fixture_article() {
 }
 
 /// `fetch --no-extract` leaves every page unpulled, which is the shape an
-/// entry has between arriving and being extracted -- and the shape that used
-/// to make `show` print nothing at all.
+/// entry has between arriving and being extracted. Since 0.0.2 that shape is
+/// still readable: the feed's own text is stored with the entry, so `show`
+/// prints it rather than one line saying there is nothing.
 #[test]
-fn an_entry_with_nothing_behind_it_still_shows_its_header_and_says_why() {
+fn an_entry_whose_page_is_not_pulled_still_reads_as_what_the_feed_carried() {
     let home = home();
     let replay = testdata("replay");
     stdout(
@@ -296,23 +297,18 @@ fn an_entry_with_nothing_behind_it_still_shows_its_header_and_says_why() {
         shown.contains("Why the borrow checker says no"),
         "the header: {shown}"
     );
-    assert!(shown.contains("pending"), "the status: {shown}");
     assert!(
-        shown.contains("extraction pending"),
-        "and why there is no body: {shown}"
+        shown.contains("pending"),
+        "nothing has been fetched yet: {shown}"
+    );
+    assert!(
+        shown.contains("Points: 212"),
+        "the feed's own text is what there is to read: {shown}"
     );
 
-    // `--markdown` is the pipe: nothing on stdout, and a zero exit.
-    let output = command(home.path())
-        .args(["show", id, "--markdown"])
-        .output()
-        .expect("running starwire show --markdown");
-    assert!(output.status.success(), "{:?}", output.status);
-    assert!(
-        output.stdout.is_empty(),
-        "{:?}",
-        String::from_utf8_lossy(&output.stdout)
-    );
+    // And `--markdown`, the pipe-friendly format, is that same text.
+    let markdown = stdout(home.path(), &["show", id, "--markdown"]);
+    assert!(markdown.contains("Points: 212"), "{markdown}");
 }
 
 #[test]

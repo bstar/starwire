@@ -15,26 +15,28 @@ use crate::wire::feed::{ArticleStatus, ArticleView, EntryId, EntryRow, ParsedEnt
 /// here would never be offered to an extractor. For a video or a post the row
 /// is complete on creation -- the feed's own text *is* the text, and there is
 /// nothing to fetch.
+///
+/// **A row waiting to be extracted gets the feed's text too**, which is what
+/// makes a failure degrade to something rather than to nothing. `put` writes
+/// `COALESCE(excluded.markdown, article.markdown)`, so a failed extraction --
+/// which carries no markdown of its own -- leaves this text in place and the
+/// reader shows it under the reason. Every one of the eighty-five failures in
+/// the reference database had text in the feed and none of it was on screen.
 pub(super) fn create_pending(
     conn: &rusqlite::Connection,
     entry: EntryId,
     policy: Policy,
     parsed: &ParsedEntry,
 ) -> Result<()> {
-    let (status, markdown) = match policy {
-        Policy::Extract => (ArticleStatus::Pending, None),
-        Policy::FeedContent | Policy::Video => {
-            let md = parsed
-                .content_html
-                .as_deref()
-                .map(|html| crate::wire::extract::from_feed_content(html, parsed.url.as_deref()));
-            let status = if policy == Policy::Video {
-                ArticleStatus::NotApplicable
-            } else {
-                ArticleStatus::FeedContent
-            };
-            (status, md)
-        }
+    let markdown = parsed
+        .content_html
+        .as_deref()
+        .map(|html| crate::wire::extract::from_feed_content(html, parsed.url.as_deref()))
+        .filter(|md| !md.trim().is_empty());
+    let status = match policy {
+        Policy::Extract => ArticleStatus::Pending,
+        Policy::Video => ArticleStatus::NotApplicable,
+        Policy::FeedContent => ArticleStatus::FeedContent,
     };
     conn.execute(
         "INSERT INTO article(entry_id, status, title, markdown, byline, source_url, extracted_at)
@@ -295,6 +297,61 @@ mod tests {
         assert!(view.markdown.contains("Body."));
         assert!(view.extracted_at.is_some());
         assert_eq!(pending_count(&db).unwrap(), 1);
+    }
+
+    /// The whole of WP-7's first item, end to end: an entry whose page has
+    /// not been fetched yet is already readable, and a failure leaves that
+    /// text where it was instead of emptying the row.
+    #[test]
+    fn a_failed_extraction_falls_back_to_the_text_the_feed_carried() {
+        let mut db = Db::open_in_memory().unwrap();
+        let feed = feeds::add(&db, "https://e.org/f", None, FeedKind::Web, None, None)
+            .unwrap()
+            .id();
+        entries::upsert_parsed(
+            &mut db,
+            feed,
+            FeedKind::Web,
+            &ParsedFeed {
+                entries: vec![ParsedEntry {
+                    guid: "a".into(),
+                    url: Some("https://e.org/a".into()),
+                    title: "Behind a wall".into(),
+                    content_html: Some("<p>Two sentences, and a link to the rest.</p>".into()),
+                    ..ParsedEntry::default()
+                }],
+                ..ParsedFeed::default()
+            },
+        )
+        .unwrap();
+        let id = first(&db);
+
+        let waiting = get(&db, id).unwrap().unwrap();
+        assert_eq!(waiting.status, ArticleStatus::Pending);
+        assert!(
+            waiting.markdown.contains("Two sentences"),
+            "an entry is readable before anything is fetched: {:?}",
+            waiting.markdown
+        );
+
+        put(
+            &db,
+            id,
+            &ArticleResult {
+                status: ArticleStatus::Failed,
+                error: Some("the site answered 403".into()),
+                ..ArticleResult::default()
+            },
+        )
+        .unwrap();
+        let failed = get(&db, id).unwrap().unwrap();
+        assert_eq!(failed.status, ArticleStatus::Failed);
+        assert!(
+            failed.markdown.contains("Two sentences"),
+            "the failure emptied the row: {:?}",
+            failed.markdown
+        );
+        assert_eq!(failed.error.as_deref(), Some("the site answered 403"));
     }
 
     #[test]

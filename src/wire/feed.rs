@@ -254,6 +254,15 @@ pub struct ArticleView {
     pub markdown: std::sync::Arc<str>,
     pub status: ArticleStatus,
     pub image_url: Option<String>,
+    /// Why the page did not yield, where it did not.
+    ///
+    /// **It is set beside kept text, not instead of it.** Since 0.0.2 every
+    /// article row carries the feed's own text from the moment the entry is
+    /// stored, so a [`ArticleStatus::Failed`] view has `markdown` *and*
+    /// `error`: the reader draws the text and puts the reason above it rather
+    /// than drawing a reason where an article should be. `paywall` beside
+    /// [`ArticleStatus::FeedContent`] is the same shape -- the page was
+    /// fetched, what came back was a stub, and the feed's text is better.
     pub error: Option<String>,
     /// When the text was last written. The reader's cache keys on this: it is
     /// what changes when an extraction lands behind an already-open entry.
