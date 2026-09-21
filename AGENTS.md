@@ -233,9 +233,10 @@ of protocol details still waiting on one. Specifically, still unverified:
 - **Conditional requests against real servers.** `ETag` and
   `Last-Modified` are stored and sent back; no server has yet answered 304 to
   this program.
-- **Reddit's rate limiter.** The per-host gap, the user agent and the
-  `Retry-After` handling are all written to a reading of how it behaves, not
-  to an observation of it.
+- **Reddit's rate limiter.** The per-host gap, the user agent, the
+  `Retry-After` handling and the 200-with-an-HTML-page case that
+  `fetch::looks_like_html` catches are all written to a reading of how it
+  behaves, not to an observation of it.
 - **`yt-dlp`.** Neither `resolve_with_yt_dlp` nor `yt_subscriptions` has been
   run against the real binary; the parsing is tested against fixture output.
   `:ytsubs` in particular lists recent subscription *videos* rather than the
