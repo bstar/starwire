@@ -41,11 +41,19 @@ split.
 - Read-later as a separate flag. Starred *is* read-later: two lists nobody
   empties are worse than one.
 
+## Verified against the network, once
+
+One live run: sixteen of the twenty entries on the Hacker News front page
+extracted into readable markdown, with their headings, code blocks and links.
+The four that did not are the shape to expect — a discussion, a PDF, a
+paywall.
+
 ## Not verified against the real thing
 
-Everything above is tested against fixtures in `testdata/`, which is a
-different claim from having been run against the network. Specifically: how
-often real articles yield to the extractor, whether real servers' conditional
-requests behave as expected, Reddit's rate limiter, `yt-dlp` itself, a
-newsboat cache written by an older newsboat, and two writers on one database
-at the same time. `AGENTS.md` keeps that list current.
+Everything else is tested against fixtures in `testdata/`, which is a
+different claim from having been run against the network. Specifically: what
+extraction looks like across a whole feed list over a week, whether real
+servers' conditional requests behave as expected, Reddit's rate limiter,
+`yt-dlp` itself, a newsboat cache written by an older newsboat, and two
+writers on one database at the same time. `AGENTS.md` keeps that list
+current.

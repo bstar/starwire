@@ -195,18 +195,41 @@ the columns this reads are five.
 `STARWIRE_TEST_NET=1` gates anything that reaches the real network; the
 `yt-dlp` tests also want the binary on `PATH`.
 
+## Verified against the network, once
+
+`starwire extract` and one `starwire fetch` have now been run with the
+network on. What was observed, so that the next person does not have to guess
+at it:
+
+- **Real article pages yield.** `blog.rust-lang.org`, a Phoronix news item and
+  the sixteen of twenty entries on the Hacker News front page that linked out
+  all came back as readable markdown with their headings, code blocks, links
+  and bylines intact. Four of the twenty did not, which is roughly the rate to
+  expect: some HN submissions are discussions, some are PDFs, and some are
+  paywalled.
+- **A homepage extracts too, and that is worth knowing.** `phoronix.com/` gets
+  past `is_probably_readable` and comes back as a list of headlines with their
+  teaser paragraphs, because a homepage full of prose looks like prose. This
+  does not affect the program in use -- it extracts entry links, which are
+  articles -- but it means `starwire extract <a homepage>` prints something
+  plausible rather than refusing, and anybody tightening the gate should know
+  that is the case it would have to catch.
+- **`keep_classes: true` is load-bearing.** With it off, every fenced code
+  block in every article lost its language. This is why the comment in
+  `extract/readability.rs` says what it says.
+
 ## Not yet verified
 
-Nothing in this milestone has been run against a live feed list yet —
-everything above is built and passes its own tests against fixtures, which is
+Beyond the one run above, nothing in this milestone has met a real feed list
+— everything else is built and passes its own tests against fixtures, which is
 a different claim. This is where a claim that turned out to be a guess rather
 than an observation gets recorded, the same way STAR/CORD keeps its own list
 of protocol details still waiting on one. Specifically, still unverified:
 
-- **Extraction against real sites.** Every page the extractor has seen is
-  `testdata/pages/article.html`. How often a real feed list's articles yield,
-  and what the failures look like, is the first thing to find out with the
-  network on: `starwire extract <url>` is the probe.
+- **Extraction at scale.** Twenty entries from one feed is not forty-one
+  feeds over a week. What the failure reasons look like across a real list,
+  and whether any site is slow enough to be worth a special case, is still
+  open.
 - **Conditional requests against real servers.** `ETag` and
   `Last-Modified` are stored and sent back; no server has yet answered 304 to
   this program.
