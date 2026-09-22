@@ -348,6 +348,13 @@ pub struct State {
     /// generation it was issued under and is dropped, unopened, when it is
     /// behind this.
     pub refresh_generation: u64,
+    /// Net work a host asked to be given back later, and when it may go
+    /// out: the other half of `net::MAX_PARK`, which is what keeps a
+    /// sixty-one-second gap from being a sleeping thread. Held here rather
+    /// than in a channel for the same reason the extraction queue is -- a
+    /// job in a channel is one the generation stamp cannot reach -- and
+    /// handed back by the clock, in [`done_tick`].
+    pub deferred: Vec<(std::time::Instant, NetJob, Lane)>,
     /// Bumped by [`apply`] whenever it emitted an event, so the render loop
     /// can tell "nothing happened" from "copy a fresh view out" without
     /// comparing the whole structure.
@@ -379,6 +386,7 @@ impl State {
             last_refresh: None,
             last_retention: None,
             refresh_generation: 0,
+            deferred: Vec::new(),
             version: 0,
         }
     }
@@ -563,6 +571,7 @@ fn apply_done(state: &mut State, done: Done) -> Effects {
             jobs: vec![Job::Db(DbJob::LoadFeeds), reload_page(state)],
             events: Vec::new(),
         },
+        Done::Deferred { job, lane, until } => done_deferred(state, job, lane, until),
         Done::Tick(now) => done_tick(state, now),
         Done::Note(note) => Effects::note(note),
     }
@@ -999,6 +1008,13 @@ fn cmd_cancel_refresh(state: &mut State) -> Effects {
     state.fetching.clear();
     state.extract_queue.clear();
     state.extract_inflight = 0;
+    // What a host sent away is cancelled here rather than when its time
+    // comes round: a deferred fetch would otherwise be dispatched by the
+    // next tick and dropped by the thread that picked it up, which is a
+    // request's worth of nothing and a minute of the bar looking wrong.
+    state
+        .deferred
+        .retain(|(_, job, _)| !is_behind_refresh(job, state.refresh_generation));
     end_refresh(state);
     Effects {
         jobs: Vec::new(),
@@ -1417,12 +1433,51 @@ fn cmd_open_external(state: &mut State, id: EntryId) -> Effects {
     }
 }
 
+// --------------------------------------------------------- the deferred ----
+
+/// A host asked for this one to come back later. It is not a failure and it
+/// is not an answer, so nothing is counted, nothing is written and nothing
+/// is freed: the feed stays in `fetching` and the extraction or the picture
+/// keeps its place against the in-flight ceiling, because the work is still
+/// going to happen. All that changes is that no thread is waiting for it.
+fn done_deferred(state: &mut State, job: NetJob, lane: Lane, until: std::time::Instant) -> Effects {
+    state.deferred.push((until, job, lane));
+    Effects::none()
+}
+
+/// The refresh generation a deferred job was issued under, where it has one.
+///
+/// A picture counts on `picture_generation` instead and is not a refresh's
+/// to cancel: the reader looking at an article is not what `R` interrupted.
+fn is_behind_refresh(job: &NetJob, generation: u64) -> bool {
+    match job {
+        NetJob::Fetch { generation: g, .. } | NetJob::Extract { generation: g, .. } => {
+            *g < generation
+        }
+        _ => false,
+    }
+}
+
 // ------------------------------------------------------------ the clock ----
 
 const DAY: i64 = 24 * 60 * 60;
 
 fn done_tick(state: &mut State, now: Timestamp) -> Effects {
     let mut effects = Effects::none();
+
+    // What a host sent away, back the moment it is due. A second a job may
+    // have to wait beyond its time is the tick, and a second is nothing
+    // against the sixty-one this exists for.
+    if !state.deferred.is_empty() {
+        let at = std::time::Instant::now();
+        let (due, waiting) = std::mem::take(&mut state.deferred)
+            .into_iter()
+            .partition::<Vec<_>, _>(|(until, _, _)| *until <= at);
+        state.deferred = waiting;
+        for (_, job, lane) in due {
+            effects.push_job(Job::Net(job, lane));
+        }
+    }
 
     let refresh_secs = i64::from(state.settings.refresh_minutes) * 60;
     if refresh_secs > 0 && !state.refresh.running {
@@ -2252,6 +2307,114 @@ mod tests {
                 .any(|j| matches!(j, DbJob::PendingExtracts { .. })),
             "this is what makes a job that did not fit its queue cost a delay \
              rather than an article"
+        );
+    }
+
+    /// The other half of `net::MAX_PARK`: a host that asked to be left alone
+    /// costs a delay rather than a thread, and the clock is what brings the
+    /// work back.
+    #[test]
+    fn a_deferred_job_is_dispatched_by_the_tick_when_due() {
+        let mut s = state();
+        s.last_refresh = Some(crate::wire::testing::now());
+        s.last_retention = Some(crate::wire::testing::now());
+
+        let later = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let effects = apply(
+            &mut s,
+            Change::Done(Done::Deferred {
+                job: NetJob::Fetch {
+                    feed: FeedId(1),
+                    url: "https://www.reddit.com/r/rust/.rss".into(),
+                    kind: FeedKind::Web,
+                    conditional: super::super::db::feeds::Conditional::default(),
+                    max_bytes: 1 << 20,
+                    generation: 0,
+                },
+                lane: Lane::Background,
+                until: later,
+            }),
+        );
+        assert!(
+            effects.jobs.is_empty() && effects.events.is_empty(),
+            "a deferral is not news: nothing failed and nothing arrived"
+        );
+        assert_eq!(s.deferred.len(), 1);
+
+        // Not yet.
+        let effects = apply(
+            &mut s,
+            Change::Done(Done::Tick(crate::wire::testing::now())),
+        );
+        assert!(net_jobs(&effects).is_empty(), "a minute has not passed");
+        assert_eq!(s.deferred.len(), 1);
+
+        // Its time has come -- moved back rather than waited for, because a
+        // test that sleeps a minute is a suite nobody runs.
+        s.deferred[0].0 = std::time::Instant::now();
+        let effects = apply(
+            &mut s,
+            Change::Done(Done::Tick(crate::wire::testing::now())),
+        );
+        assert!(
+            matches!(
+                net_jobs(&effects).as_slice(),
+                [(
+                    NetJob::Fetch {
+                        feed: FeedId(1),
+                        ..
+                    },
+                    Lane::Background
+                )]
+            ),
+            "{:?}",
+            net_jobs(&effects)
+        );
+        assert!(s.deferred.is_empty(), "and it is handed out once");
+    }
+
+    /// A refresh somebody stopped stops, including the part of it a host had
+    /// sent away. Dispatching it a minute later would be a request's worth of
+    /// nothing and a bar that moved after it was told not to.
+    #[test]
+    fn a_cancel_drops_deferred_fetches() {
+        let mut s = state();
+        let at = std::time::Instant::now();
+        apply(
+            &mut s,
+            Change::Done(Done::Deferred {
+                job: NetJob::Fetch {
+                    feed: FeedId(1),
+                    url: "https://www.reddit.com/r/rust/.rss".into(),
+                    kind: FeedKind::Web,
+                    conditional: super::super::db::feeds::Conditional::default(),
+                    max_bytes: 1 << 20,
+                    generation: 0,
+                },
+                lane: Lane::Background,
+                until: at,
+            }),
+        );
+        apply(
+            &mut s,
+            Change::Done(Done::Deferred {
+                job: NetJob::Picture {
+                    url: "https://e.org/a.png".into(),
+                    max_w: 80,
+                    max_h: 8,
+                    generation: 0,
+                },
+                lane: Lane::Urgent,
+                until: at,
+            }),
+        );
+        assert_eq!(s.deferred.len(), 2);
+
+        apply(&mut s, Change::Command(Command::CancelRefresh));
+        assert!(
+            matches!(s.deferred.as_slice(), [(_, NetJob::Picture { .. }, _)]),
+            "the fetch goes and the picture stays: a reader looking at an \
+             article is not what a cancelled refresh interrupted"
         );
     }
 

@@ -163,6 +163,11 @@ pub enum NetError {
     Wall(String),
     #[error("more than {0} redirects")]
     TooManyRedirects(usize),
+    /// The host's gap has not passed, and it is longer than a worker thread
+    /// should be asleep for. Not something that went wrong: see [`MAX_PARK`]
+    /// and [`take_deferral`].
+    #[error("the host cannot be asked again yet")]
+    NotBefore(Instant),
 }
 
 /// The one way out.
@@ -178,6 +183,69 @@ pub trait Http: Send + Sync {
     fn is_live(&self) -> bool {
         true
     }
+}
+
+/// The longest a lease will hold a thread asleep before it defers instead.
+///
+/// Three seconds, and the number matters in both directions. The ordinary
+/// gap between two requests to one host is two seconds, so an ordinary
+/// refresh still waits in place and behaves exactly as it did. A host with a
+/// rule of its own does not: `reddit.com` is once every sixty-one seconds,
+/// and a reference feed list has five subreddits in it, so a refresh that
+/// parked on them put all four net threads to sleep one after another and
+/// the whole lane stopped for minutes -- with the reader's own pictures
+/// queued behind it.
+///
+/// What happens instead is [`NetError::NotBefore`]: the slot is given back,
+/// the job goes into `State::deferred`, and the clock hands it out again
+/// when its time comes. Nothing is asked any sooner than politeness said;
+/// the difference is only which thread is waiting, and now none is.
+pub const MAX_PARK: Duration = Duration::from_secs(3);
+
+// A deferral the requests on this thread have just run into, and until when.
+// See `take_deferral` for why it lives here rather than in a return type.
+thread_local! {
+    static DEFERRED: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// Forget any deferral left on this thread. Called before a job starts.
+pub fn clear_deferral() {
+    DEFERRED.with(|cell| cell.set(None));
+}
+
+/// What this thread's requests ran into, if anything, and until when. Taking
+/// it forgets it.
+///
+/// A thread-local rather than a value threaded back through every return
+/// type, because nothing in between could carry it. A lease is refused
+/// inside [`Live::get`], and between there and the worker that has to act on
+/// it sit `fetch::fetch`, `extract::run` and `pictures::fetch`, each of which
+/// deliberately turns every network failure into a sentence recorded against
+/// a feed, an entry or a picture. Widening all three so that one value could
+/// mean "not yet" would write the same case out three times and still miss
+/// the fourth: a redirect hop and a `rel="next"` follow take leases of their
+/// own, and the call that took one is not the call the worker made.
+///
+/// It is sound because of the shape of the pool rather than by luck. A net
+/// thread runs one job at a time, start to finish, and
+/// [`crate::wire::worker::perform_net`] is the only reader -- it clears this
+/// before the job and takes it after, so a deferral noted on a thread doing
+/// anything else is dropped at the next clear.
+pub fn take_deferral() -> Option<Instant> {
+    DEFERRED.with(std::cell::Cell::take)
+}
+
+/// Note a refused lease. Never moved earlier, for the same reason
+/// [`Politeness::hold`] is never shortened: two hosts on one job's path that
+/// both said to wait are two waits, and the job comes back after the later
+/// of them.
+fn note_deferral(until: Instant) {
+    DEFERRED.with(|cell| {
+        cell.set(Some(match cell.get() {
+            Some(current) if current > until => current,
+            _ => until,
+        }));
+    });
 }
 
 /// The gap a picture leaves between one request and the next to one host.
@@ -275,6 +343,18 @@ impl Live {
                 ),
         }
     }
+
+    /// The same client for a run with nowhere to defer a job to.
+    ///
+    /// `starwire fetch` from a timer is a list of feeds and an exit: there
+    /// is no clock to hand a deferred job back to and nothing else the
+    /// threads could be doing, so they wait out whatever gap a host asks
+    /// for, which is what every version of this program has done. The window
+    /// uses [`Self::new`], where a long wait is [`MAX_PARK`]'s business.
+    pub fn patient(mut self) -> Self {
+        self.politeness.max_park = Duration::MAX;
+        self
+    }
 }
 
 impl Http for Live {
@@ -286,7 +366,12 @@ impl Http for Live {
             // every host in a chain waits its own turn.
             let lease = self
                 .politeness
-                .lease(target.host_str().unwrap_or(""), options.host_gap);
+                .lease(target.host_str().unwrap_or(""), options.host_gap)
+                .inspect_err(|e| {
+                    if let NetError::NotBefore(until) = e {
+                        note_deferral(*until);
+                    }
+                })?;
 
             let mut req = self.agent.get(target.as_str());
             if let Some(secs) = options.timeout_secs {
@@ -608,6 +693,10 @@ pub struct Politeness {
     /// rules are and winning over them: a reader who has been asked by an
     /// administrator to slow down should not have to wait for a release.
     overrides: HashMap<String, Duration>,
+    /// How long a lease will sleep before it defers instead. [`MAX_PARK`] in
+    /// the window; `Duration::MAX` for a run that waits, see
+    /// [`Live::patient`].
+    max_park: Duration,
     hosts: Mutex<HashMap<String, Arc<HostSlot>>>,
 }
 
@@ -638,6 +727,7 @@ impl Politeness {
         Self {
             min_interval,
             overrides: HashMap::new(),
+            max_park: MAX_PARK,
             hosts: Mutex::new(HashMap::new()),
         }
     }
@@ -739,7 +829,14 @@ impl Politeness {
     /// gap since their request to pass. Dropping the returned guard stamps
     /// the clock and lets the next thread in. `gap` is the caller's own
     /// interval, where it has one; see [`Self::interval_for_request`].
-    pub fn lease(&self, host: &str, gap: Option<Duration>) -> HostLease {
+    ///
+    /// A wait longer than `max_park` is not waited out. The slot goes back
+    /// and the caller is told when the host may be asked, so the thread can
+    /// go and do something else -- see [`MAX_PARK`]. Waiting for whoever
+    /// holds the slot is not that wait: a request is bounded by its own
+    /// timeout, and two threads that both walked away from a host neither
+    /// had asked yet would be a host nothing ever asks.
+    pub fn lease(&self, host: &str, gap: Option<Duration>) -> Result<HostLease, NetError> {
         let slot = self.slot(host);
         let interval = self.interval_for_request(host, gap);
 
@@ -758,10 +855,22 @@ impl Politeness {
         if let Some(until) = not_before {
             wait = wait.max(until.saturating_duration_since(Instant::now()));
         }
+        if wait > self.max_park {
+            // Given back before anybody is told anything: a thread that
+            // walks away still holding the slot is a host nothing can ask
+            // again. The clock is *not* stamped -- no request was made, and
+            // stamping it would push the next attempt a whole gap further
+            // out every time one of these came round.
+            let mut state = slot.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.busy = false;
+            drop(state);
+            slot.free.notify_one();
+            return Err(NetError::NotBefore(Instant::now() + wait));
+        }
         if !wait.is_zero() {
             std::thread::sleep(wait);
         }
-        HostLease { slot }
+        Ok(HostLease { slot })
     }
 }
 
@@ -920,7 +1029,7 @@ mod tests {
                 let politeness = Arc::clone(&politeness);
                 let order = Arc::clone(&order);
                 scope.spawn(move || {
-                    let _lease = politeness.lease("example.org", None);
+                    let _lease = politeness.lease("example.org", None).expect("the slot");
                     order.lock().unwrap().push(n);
                     std::thread::sleep(Duration::from_millis(5));
                 });
@@ -934,7 +1043,7 @@ mod tests {
             for host in ["a.example", "b.example"] {
                 let politeness = Arc::clone(&politeness);
                 scope.spawn(move || {
-                    let _lease = politeness.lease(host, None);
+                    let _lease = politeness.lease(host, None).expect("the slot");
                 });
             }
         });
@@ -948,9 +1057,9 @@ mod tests {
     #[test]
     fn a_second_request_to_one_host_waits_for_the_gap() {
         let politeness = Politeness::new(Duration::from_millis(40));
-        drop(politeness.lease("example.org", None));
+        drop(politeness.lease("example.org", None).expect("the slot"));
         let started = Instant::now();
-        drop(politeness.lease("example.org", None));
+        drop(politeness.lease("example.org", None).expect("the slot"));
         assert!(
             started.elapsed() >= Duration::from_millis(30),
             "{:?}",
@@ -958,12 +1067,87 @@ mod tests {
         );
     }
 
+    /// The whole of the fix for a refresh that stopped for minutes: a wait
+    /// nobody should sleep through comes back as a time instead, at once,
+    /// and the host is left free for whoever is ready to ask it.
+    #[test]
+    fn a_long_wait_defers_instead_of_parking() {
+        let politeness = Politeness::new(Duration::from_millis(1));
+        // Reddit's own rule: sixty-one seconds, which is twenty times
+        // MAX_PARK.
+        drop(politeness.lease("www.reddit.com", None).expect("the first"));
+
+        let started = Instant::now();
+        let until = match politeness.lease("www.reddit.com", None) {
+            Err(NetError::NotBefore(until)) => until,
+            Ok(_) => panic!("a sixty-one second gap was taken as a lease"),
+            Err(e) => panic!("{e}"),
+        };
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "the thread was parked after all: {:?}",
+            started.elapsed()
+        );
+        let wait = until.saturating_duration_since(started);
+        assert!(
+            wait > MAX_PARK && wait <= Duration::from_secs(61),
+            "{wait:?}"
+        );
+
+        // And the slot is free: a second thread asking gets the same answer
+        // rather than waiting on a flag nobody will clear.
+        assert!(matches!(
+            politeness.lease("www.reddit.com", None),
+            Err(NetError::NotBefore(_))
+        ));
+
+        // `max_park` is the whole of the difference, and a run with nowhere
+        // to defer to sets it out of reach -- see `Live::patient`. Measured
+        // at forty milliseconds rather than at sixty-one seconds, because
+        // what is being checked is which branch was taken.
+        let impatient = Politeness {
+            max_park: Duration::ZERO,
+            ..Politeness::new(Duration::from_millis(40))
+        };
+        drop(impatient.lease("example.org", None).expect("the first"));
+        assert!(matches!(
+            impatient.lease("example.org", None),
+            Err(NetError::NotBefore(_))
+        ));
+
+        let patient = Politeness {
+            max_park: Duration::MAX,
+            ..Politeness::new(Duration::from_millis(40))
+        };
+        drop(patient.lease("example.org", None).expect("the first"));
+        assert!(
+            patient.lease("example.org", None).is_ok(),
+            "a patient run waits the gap out instead"
+        );
+    }
+
+    /// The ordinary gap is still slept through, so a refresh of a feed list
+    /// with no rule in it behaves exactly as it did.
+    #[test]
+    fn a_short_wait_is_still_waited_in_place() {
+        let politeness = Politeness::new(Duration::from_millis(40));
+        drop(politeness.lease("example.org", None).expect("the first"));
+        let started = Instant::now();
+        assert!(politeness.lease("example.org", None).is_ok());
+        assert!(started.elapsed() >= Duration::from_millis(30));
+        assert!(
+            Duration::from_secs(2) < MAX_PARK,
+            "the default gap has to stay under the park ceiling, or every \
+             second request to a host would defer"
+        );
+    }
+
     #[test]
     fn a_host_is_matched_without_regard_to_case() {
         let politeness = Politeness::new(Duration::from_millis(40));
-        drop(politeness.lease("Example.ORG", None));
+        drop(politeness.lease("Example.ORG", None).expect("the slot"));
         let started = Instant::now();
-        drop(politeness.lease("example.org", None));
+        drop(politeness.lease("example.org", None).expect("the slot"));
         assert!(started.elapsed() >= Duration::from_millis(30));
     }
 
@@ -1086,9 +1270,17 @@ mod tests {
         // And the gap is really waited: two pictures off one host are serial
         // with the short gap between them rather than the long one.
         let politeness = Politeness::new(Duration::from_secs(30));
-        drop(politeness.lease("example.org", Some(Duration::from_millis(50))));
+        drop(
+            politeness
+                .lease("example.org", Some(Duration::from_millis(50)))
+                .expect("the slot"),
+        );
         let started = Instant::now();
-        drop(politeness.lease("example.org", Some(Duration::from_millis(50))));
+        drop(
+            politeness
+                .lease("example.org", Some(Duration::from_millis(50)))
+                .expect("the slot"),
+        );
         let waited = started.elapsed();
         assert!(waited >= Duration::from_millis(30), "{waited:?}");
         assert!(waited < Duration::from_secs(5), "{waited:?}");
@@ -1131,7 +1323,7 @@ mod tests {
         // A shorter hold does not talk the longer one down.
         politeness.hold("example.org", Duration::from_millis(1));
         let started = Instant::now();
-        drop(politeness.lease("example.org", None));
+        drop(politeness.lease("example.org", None).expect("the slot"));
         assert!(
             started.elapsed() >= Duration::from_millis(40),
             "{:?}",

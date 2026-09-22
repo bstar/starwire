@@ -16,6 +16,13 @@
 //! to read, a channel just typed into the add box. A refresh of forty-one
 //! feeds fills the background lane, and the reader never waits behind it.
 //!
+//! **A net thread is never asleep for long.** Politeness is a gap between
+//! two requests to one host, and some hosts want a minute of it. A thread
+//! that slept through one of those was a quarter of the pool gone, so a
+//! wait over `net::MAX_PARK` comes back as [`Done::Deferred`] instead: the
+//! job goes into `State::deferred` and the clock dispatches it when its time
+//! comes. Nothing is asked any sooner than it would have been.
+//!
 //! **Every fetch and every extraction carries a generation**, stamped from
 //! `State::refresh_generation` when the job was made and checked again when
 //! it is picked up. `CancelRefresh` bumps the generation, and what is left
@@ -301,6 +308,15 @@ pub enum Done {
         /// type to tell apart.
         result: Result<Arc<super::pictures::Picture>, String>,
         generation: u64,
+    },
+    /// A job that did not run because a host it needed asked for longer
+    /// than a net thread should be asleep for. Not a failure and not an
+    /// answer: the work itself, handed back for `State` to hold until
+    /// `until` and then dispatch again. See `net::MAX_PARK`.
+    Deferred {
+        job: NetJob,
+        lane: Lane,
+        until: Instant,
     },
     /// Another process committed to the file -- a `starwire fetch` from a
     /// timer while the window was open.
@@ -800,13 +816,42 @@ fn export_opml(db: &Db, path: &std::path::Path) -> anyhow::Result<Note> {
     )))
 }
 
-/// Run one net job.
+/// Run one net job, and defer it instead where a host said to come back.
+///
+/// The deferral is read off the thread rather than out of the result --
+/// `net::take_deferral`, which explains why -- and it wins over whatever
+/// [`run_net`] made of the requests it did get to make. So a feed whose host
+/// is not askable yet is not recorded as a failure, an entry does not spend
+/// an attempt, and a picture stays `Loading` rather than turning into a line
+/// of text: `lane` is where the job goes back, and the clock sends it.
+pub fn perform_net(
+    job: NetJob,
+    lane: Lane,
+    http: &dyn Http,
+    cfg: &WireConfig,
+    state: &Arc<RwLock<State>>,
+) -> Vec<Done> {
+    super::net::clear_deferral();
+    let done = run_net(&job, http, cfg, state);
+    match super::net::take_deferral() {
+        Some(until) => {
+            tracing::debug!(?job, ?lane, "deferred: the host is not askable yet");
+            vec![Done::Deferred { job, lane, until }]
+        }
+        None => done,
+    }
+}
+
+/// The work itself.
 ///
 /// `state` is read for one thing only: whether the job is stale. Checking it
 /// here rather than in the loop is what makes "dropped before a connection
 /// is opened" true of an extraction as well as of a fetch.
-pub fn perform_net(
-    job: NetJob,
+///
+/// Borrows the job rather than taking it, because [`perform_net`] may have
+/// to hand it back whole.
+fn run_net(
+    job: &NetJob,
     http: &dyn Http,
     cfg: &WireConfig,
     state: &Arc<RwLock<State>>,
@@ -820,11 +865,11 @@ pub fn perform_net(
             max_bytes,
             generation,
         } => {
-            if is_stale(state, generation) {
+            if is_stale(state, *generation) {
                 return Vec::new();
             }
             let started = Instant::now();
-            let outcome = match super::fetch::fetch(http, &url, &conditional, max_bytes) {
+            let outcome = match super::fetch::fetch(http, url, conditional, *max_bytes) {
                 Ok(outcome) => outcome,
                 // The one `Err` fetching has is a URL that will not parse,
                 // which is a permanent fact about the row rather than
@@ -836,11 +881,11 @@ pub fn perform_net(
                 },
             };
             vec![Done::Fetched {
-                feed,
-                kind,
+                feed: *feed,
+                kind: *kind,
                 outcome,
                 millis: started.elapsed().as_millis(),
-                generation,
+                generation: *generation,
             }]
         }
         NetJob::Extract {
@@ -849,19 +894,19 @@ pub fn perform_net(
             limits,
             generation,
         } => {
-            if is_stale(state, generation) {
+            if is_stale(state, *generation) {
                 return Vec::new();
             }
-            match super::extract::run(http, &url, limits) {
+            match super::extract::run(http, url, *limits) {
                 Ok(result) => vec![Done::Extracted {
-                    entry,
+                    entry: *entry,
                     result: Box::new(result),
-                    generation,
+                    generation: *generation,
                 }],
                 Err(e) => failed("extract", e),
             }
         }
-        NetJob::ResolveChannel { input } => match resolve_channel(http, &input, &cfg.youtube) {
+        NetJob::ResolveChannel { input } => match resolve_channel(http, input, &cfg.youtube) {
             Ok(done) => done,
             Err(e) => failed("youtube", e),
         },
@@ -870,7 +915,7 @@ pub fn perform_net(
         } => {
             let mut youtube = cfg.youtube.clone();
             if let Some(browser) = cookies_from_browser {
-                youtube.cookies_from_browser = browser;
+                youtube.cookies_from_browser = browser.clone();
             }
             match super::youtube::yt_subscriptions(&youtube, 200) {
                 Ok(channels) => vec![Done::Resolved {
@@ -886,19 +931,19 @@ pub fn perform_net(
             max_h,
             generation,
         } => {
-            if is_stale_picture(state, generation) {
+            if is_stale_picture(state, *generation) {
                 return Vec::new();
             }
             let result =
-                super::pictures::fetch(http, cfg.pictures_dir.as_deref(), &url, max_w, max_h)
+                super::pictures::fetch(http, cfg.pictures_dir.as_deref(), url, *max_w, *max_h)
                     .map(Arc::new);
             if let Err(e) = &result {
                 tracing::debug!("picture {url}: {e}");
             }
             vec![Done::Picture {
-                url,
+                url: url.clone(),
                 result,
-                generation,
+                generation: *generation,
             }]
         }
         NetJob::SweepPictures => {
@@ -912,7 +957,7 @@ pub fn perform_net(
             }
             Vec::new()
         }
-        NetJob::Open(target) => match open::open(&target, &cfg.player) {
+        NetJob::Open(target) => match open::open(target, &cfg.player) {
             Ok(()) => Vec::new(),
             Err(e) => failed("open", e),
         },
@@ -1030,8 +1075,8 @@ pub fn spawn_net(
             };
             match job {
                 Job::Shutdown => break,
-                Job::Net(job, _) => {
-                    for done in perform_net(job, http.as_ref(), &cfg, &state) {
+                Job::Net(job, lane) => {
+                    for done in perform_net(job, lane, http.as_ref(), &cfg, &state) {
                         finish(done, &state, &events, &senders);
                     }
                 }
@@ -1187,6 +1232,7 @@ mod tests {
                 max_bytes: 1024 * 1024,
                 generation: 0,
             },
+            Lane::Background,
             &fixture.http,
             &cfg,
             &state,
@@ -1203,6 +1249,7 @@ mod tests {
                 max_bytes: 1024 * 1024,
                 generation: 1,
             },
+            Lane::Background,
             &fixture.http,
             &cfg,
             &state,
@@ -1226,6 +1273,7 @@ mod tests {
                 limits: Limits::default(),
                 generation: 1,
             },
+            Lane::Background,
             &fixture.http,
             &cfg,
             &state,

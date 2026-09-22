@@ -24,6 +24,20 @@ and this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- **A host that asks for a minute no longer costs a thread.** Reddit wants
+  sixty-one seconds between requests, and a net thread waiting one out was a
+  quarter of the pool asleep. A feed list with five subreddits in it put all
+  four of them to sleep within seconds of the window opening, so a refresh of
+  forty-one feeds sat at `14 of 16` for minutes and the pictures of the
+  article being read — queued behind the refresh, on the same lane — never
+  arrived at all. A wait longer than three seconds is now handed back instead
+  of slept through: the job goes into a list the clock hands out again when
+  the host is askable, and nothing is asked any sooner than politeness said
+  it could be. Ordinary two-second gaps are still waited in place, so a feed
+  list with no rule in it behaves exactly as it did, and `starwire fetch`
+  from a timer still waits, because a subcommand has no clock to come back
+  to.
+
 - **A `403` is asked once more, as a browser.** Not every one of them is a
   wall: IFLScience sits behind a CloudFront rule that filters on the user
   agent and nothing else, so STAR/WIRE's own agent got a 403 and a 919-byte

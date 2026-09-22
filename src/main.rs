@@ -29,10 +29,11 @@ fn main() -> Result<()> {
     let cfg = config::Config::load(&config_path)?;
     let core = cfg.core();
 
-    // Every subcommand that reaches the network builds its client the same
-    // way, and `--replay` is the one switch that changes what "the network"
-    // means.
-    let http = build_http(&core, cli.replay.as_deref())?;
+    // The window and every subcommand that reaches the network build their
+    // client the same way. `--replay` is the one switch that changes what
+    // "the network" means, and whether there is a window is the one that
+    // changes what a long politeness gap costs -- see `build_http`.
+    let http = build_http(&core, cli.replay.as_deref(), cli.command.is_some())?;
 
     match cli.command {
         None => run_tui(cfg, &config_path, std::sync::Arc::from(http)),
@@ -68,10 +69,26 @@ fn main() -> Result<()> {
     }
 }
 
-fn build_http(core: &wire::WireConfig, replay: Option<&Path>) -> Result<Box<dyn Http>> {
+/// The client everything in this program goes out through.
+///
+/// `patient` decides what happens at a gap longer than `net::MAX_PARK`, and
+/// only the window can afford the other answer. It has a clock: a job handed
+/// back goes into `State::deferred` and is dispatched again when the host is
+/// askable, and meanwhile the thread reads the article somebody opened. A
+/// subcommand is a list of work and an exit, with nowhere to hand a job back
+/// to and nothing else its threads could be doing, so it waits the gap out
+/// as every version of this program has.
+fn build_http(
+    core: &wire::WireConfig,
+    replay: Option<&Path>,
+    patient: bool,
+) -> Result<Box<dyn Http>> {
     match replay {
         Some(dir) => Ok(Box::new(wire::net::Replay::open(dir)?)),
-        None => Ok(Box::new(wire::net::Live::new(core))),
+        None => {
+            let live = wire::net::Live::new(core);
+            Ok(Box::new(if patient { live.patient() } else { live }))
+        }
     }
 }
 

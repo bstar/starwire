@@ -220,10 +220,14 @@ impl Driver {
                         crate::wire::worker::finish(done, &self.state, &self.sink, &self.senders);
                     }
                 }
-                Job::Net(job, _) => {
-                    for done in
-                        crate::wire::worker::perform_net(job, &self.http, &self.cfg, &self.state)
-                    {
+                Job::Net(job, lane) => {
+                    for done in crate::wire::worker::perform_net(
+                        job,
+                        lane,
+                        &self.http,
+                        &self.cfg,
+                        &self.state,
+                    ) {
                         crate::wire::worker::finish(done, &self.state, &self.sink, &self.senders);
                     }
                 }

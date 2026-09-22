@@ -469,6 +469,10 @@ fn transport_is_transient(error: &super::net::NetError) -> bool {
         | NetError::NoReplay(_)
         | NetError::Wall(_)
         | NetError::TooManyRedirects(_) => false,
+        // Not a failure at all: the job is handed back to the clock and
+        // tried again whole, so nothing should be written against the entry
+        // on the strength of one. See `net::MAX_PARK`.
+        NetError::NotBefore(_) => false,
         NetError::Transport(text) => {
             let text = text.to_ascii_lowercase();
             text.contains("timeout") || text.contains("timed out")

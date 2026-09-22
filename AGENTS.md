@@ -151,13 +151,23 @@ There is no `robots.txt` request, and that is a decision rather than an
 oversight: this fetches pages a person subscribed to and asked to read, one
 per entry, at most three times unless somebody asks for another with `e` or
 `r`. The politeness is structural instead — `wire::net::Politeness` holds a
-host serially for the length of a request and sleeps the configured gap
+host serially for the length of a request and leaves the configured gap
 between them, there is a timeout (fifteen seconds for a feed, thirty for a
 page) and a two-megabyte cap, the `Accept` header says HTML, and the user
 agent names the program and links the repository so an unhappy administrator
 knows who to ask. `Politeness` also keeps a small table of hosts that have
 said they want a longer gap, and a host held by its own `x-ratelimit-reset`
 waits that out.
+
+**How it waits matters as much as how long.** A gap under `net::MAX_PARK` is
+slept through where the lease was taken, which is the ordinary two seconds
+and behaves as it always has. Anything longer is not: the lease is refused
+with `NetError::NotBefore`, the job goes into `State::deferred`, and the
+clock dispatches it again when its time comes. Reddit's sixty-one seconds
+was otherwise a quarter of the net pool asleep per subreddit, and five of
+them in one feed list stopped the lane for minutes — with the reader's own
+pictures queued behind it. `starwire fetch` from a timer uses
+`Live::patient` instead, because a subcommand has no clock to defer to.
 
 Three kinds of entry are never fetched, and `wire::extract::policy` is where
 that is decided: a video (the description is the text, and `mpv` is the
