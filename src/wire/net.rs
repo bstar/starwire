@@ -45,6 +45,15 @@ pub struct RequestOptions {
     /// quick about it, and one article behind a redirect wrapper on a site
     /// that renders it on demand is allowed to take longer.
     pub timeout_secs: Option<u64>,
+    /// The gap this request is willing to leave after the last one to the
+    /// same host, where the default is not the right one. An article's
+    /// pictures are half a dozen files from the server whose page is already
+    /// being read, and two seconds apiece would be twelve seconds of `░`;
+    /// they are also already-rendered files, which is the opposite of what
+    /// the default gap is protecting a server from. It never shortens a host
+    /// the table or the reader has a number for -- see
+    /// [`Politeness::interval_for_request`].
+    pub host_gap: Option<Duration>,
 }
 
 impl RequestOptions {
@@ -68,6 +77,20 @@ impl RequestOptions {
         Self {
             accept: Some("text/html, application/xhtml+xml;q=0.9, */*;q=0.1".into()),
             max_bytes,
+            ..Self::default()
+        }
+    }
+
+    /// What a picture inside an article asks for.
+    ///
+    /// Built with `..Default::default()` rather than field by field, so a
+    /// field added to the struct is carried here without this needing an
+    /// edit.
+    pub fn picture(max_bytes: u64) -> Self {
+        Self {
+            accept: Some("image/webp,image/png,image/jpeg,image/*;q=0.8".into()),
+            max_bytes,
+            host_gap: Some(PICTURE_GAP),
             ..Self::default()
         }
     }
@@ -152,6 +175,15 @@ pub trait Http: Send + Sync {
     }
 }
 
+/// The gap a picture leaves between one request and the next to one host.
+///
+/// Short, because the alternative is the default two seconds between each of
+/// an article's half-dozen pictures while somebody watches the placeholders;
+/// not zero, because a browser opening six connections at once is exactly the
+/// behaviour this program does not have. A host with a rule of its own keeps
+/// it -- nothing here reaches reddit.com faster than once a minute.
+pub const PICTURE_GAP: Duration = Duration::from_millis(250);
+
 /// How many hops a redirect chain may take.
 ///
 /// `ureq` follows redirects itself and is told here not to. Its loop takes no
@@ -201,7 +233,9 @@ impl Http for Live {
         for _ in 0..=MAX_REDIRECTS {
             // Held for the length of this hop and dropped before the next, so
             // every host in a chain waits its own turn.
-            let lease = self.politeness.lease(target.host_str().unwrap_or(""));
+            let lease = self
+                .politeness
+                .lease(target.host_str().unwrap_or(""), options.host_gap);
 
             let mut req = self.agent.get(target.as_str());
             if let Some(secs) = options.timeout_secs {
@@ -422,6 +456,13 @@ impl Http for Replay {
             Some("html") => Some("text/html; charset=utf-8".to_string()),
             Some("json") => Some("application/json".to_string()),
             Some("xml") => Some("application/xml".to_string()),
+            // The pictures an article carries. Without these a replayed
+            // picture has no declared type, and the cache would name every
+            // one of them by whatever the URL's tail happened to be.
+            Some("png") => Some("image/png".to_string()),
+            Some("jpg" | "jpeg") => Some("image/jpeg".to_string()),
+            Some("webp") => Some("image/webp".to_string()),
+            Some("gif") => Some("image/gif".to_string()),
             _ => None,
         };
         Ok(Response {
@@ -557,14 +598,33 @@ impl Politeness {
     /// table above knows, else the default. The longest matching suffix wins,
     /// so a rule for one subdomain beats a rule for its parent.
     pub fn interval_for(&self, host: &str) -> Duration {
+        self.interval_for_request(host, None)
+    }
+
+    /// The same, for a request that has a gap of its own in mind.
+    ///
+    /// A named host keeps its number whatever the request asks for: the whole
+    /// value of the table is that `reddit.com` is once a minute for
+    /// everything this program does, and a request that could shorten it
+    /// would be a way of getting the program blocked one picture at a time.
+    /// Where there is no rule and no override, what the request asked for is
+    /// what it gets, and the default is for a request that asked for nothing.
+    pub fn interval_for_request(&self, host: &str, requested: Option<Duration>) -> Duration {
+        match self.named_interval(host) {
+            Some(named) => named,
+            None => requested.unwrap_or(self.min_interval),
+        }
+    }
+
+    /// The gap somebody has written down for this host, by hand or in the
+    /// table -- as opposed to the default, which is merely what is left.
+    fn named_interval(&self, host: &str) -> Option<Duration> {
         let host = host.to_ascii_lowercase();
-        let configured = self
-            .overrides
+        self.overrides
             .iter()
             .filter(|(suffix, _)| host_matches(&host, suffix))
             .max_by_key(|(suffix, _)| suffix.len())
-            .map(|(_, interval)| *interval);
-        configured
+            .map(|(_, interval)| *interval)
             .or_else(|| {
                 HOST_RULES
                     .iter()
@@ -572,7 +632,6 @@ impl Politeness {
                     .max_by_key(|rule| rule.host_suffix.len())
                     .map(|rule| rule.min_interval)
             })
-            .unwrap_or(self.min_interval)
     }
 
     /// Whether this host's rate-limit headers are worth believing.
@@ -617,10 +676,11 @@ impl Politeness {
 
     /// Take the lease for `host`, waiting for whoever has it and then for the
     /// gap since their request to pass. Dropping the returned guard stamps
-    /// the clock and lets the next thread in.
-    pub fn lease(&self, host: &str) -> HostLease {
+    /// the clock and lets the next thread in. `gap` is the caller's own
+    /// interval, where it has one; see [`Self::interval_for_request`].
+    pub fn lease(&self, host: &str, gap: Option<Duration>) -> HostLease {
         let slot = self.slot(host);
-        let interval = self.interval_for(host);
+        let interval = self.interval_for_request(host, gap);
 
         let (elapsed, not_before) = {
             // Poisoning is tolerated throughout: a panic in the middle of one
@@ -750,6 +810,10 @@ mod tests {
             "the agent's own timeout, unless asked"
         );
         assert_eq!(page.timeout(30).timeout_secs, Some(30));
+        assert_eq!(
+            feed.host_gap, None,
+            "a feed leaves the gap to the host's own rule"
+        );
 
         let conditional = RequestOptions::feed(1).conditional(Some("\"e\"".into()), None);
         assert_eq!(conditional.etag.as_deref(), Some("\"e\""));
@@ -765,7 +829,7 @@ mod tests {
                 let politeness = Arc::clone(&politeness);
                 let order = Arc::clone(&order);
                 scope.spawn(move || {
-                    let _lease = politeness.lease("example.org");
+                    let _lease = politeness.lease("example.org", None);
                     order.lock().unwrap().push(n);
                     std::thread::sleep(Duration::from_millis(5));
                 });
@@ -779,7 +843,7 @@ mod tests {
             for host in ["a.example", "b.example"] {
                 let politeness = Arc::clone(&politeness);
                 scope.spawn(move || {
-                    let _lease = politeness.lease(host);
+                    let _lease = politeness.lease(host, None);
                 });
             }
         });
@@ -793,9 +857,9 @@ mod tests {
     #[test]
     fn a_second_request_to_one_host_waits_for_the_gap() {
         let politeness = Politeness::new(Duration::from_millis(40));
-        drop(politeness.lease("example.org"));
+        drop(politeness.lease("example.org", None));
         let started = Instant::now();
-        drop(politeness.lease("example.org"));
+        drop(politeness.lease("example.org", None));
         assert!(
             started.elapsed() >= Duration::from_millis(30),
             "{:?}",
@@ -806,9 +870,9 @@ mod tests {
     #[test]
     fn a_host_is_matched_without_regard_to_case() {
         let politeness = Politeness::new(Duration::from_millis(40));
-        drop(politeness.lease("Example.ORG"));
+        drop(politeness.lease("Example.ORG", None));
         let started = Instant::now();
-        drop(politeness.lease("example.org"));
+        drop(politeness.lease("example.org", None));
         assert!(started.elapsed() >= Duration::from_millis(30));
     }
 
@@ -895,6 +959,50 @@ mod tests {
         assert_eq!(politeness.interval_for("e.example"), Duration::from_secs(2));
     }
 
+    /// A picture asks for a shorter gap than the default and gets it, and a
+    /// host somebody has written a number down for keeps that number: the
+    /// whole point of the table is that nothing in this program reaches
+    /// reddit.com more than once a minute, pictures included.
+    #[test]
+    fn a_picture_lease_waits_its_own_gap() {
+        let options = RequestOptions::picture(1 << 20);
+        assert_eq!(options.host_gap, Some(PICTURE_GAP));
+        assert!(options.accept.as_deref().unwrap().contains("image/webp"));
+        assert_eq!(options.max_bytes, 1 << 20);
+
+        let politeness = Politeness::new(Duration::from_secs(2))
+            .with_host_intervals([("slow.example".to_string(), 30)]);
+        assert_eq!(
+            politeness.interval_for_request("example.org", options.host_gap),
+            PICTURE_GAP
+        );
+        assert_eq!(
+            politeness.interval_for_request("www.reddit.com", options.host_gap),
+            Duration::from_secs(61),
+            "a picture must not talk a rule down"
+        );
+        assert_eq!(
+            politeness.interval_for_request("slow.example", options.host_gap),
+            Duration::from_secs(30),
+            "nor the reader's own number"
+        );
+        assert_eq!(
+            politeness.interval_for_request("example.org", None),
+            Duration::from_secs(2),
+            "a request with nothing in mind still waits the default"
+        );
+
+        // And the gap is really waited: two pictures off one host are serial
+        // with the short gap between them rather than the long one.
+        let politeness = Politeness::new(Duration::from_secs(30));
+        drop(politeness.lease("example.org", Some(Duration::from_millis(50))));
+        let started = Instant::now();
+        drop(politeness.lease("example.org", Some(Duration::from_millis(50))));
+        let waited = started.elapsed();
+        assert!(waited >= Duration::from_millis(30), "{waited:?}");
+        assert!(waited < Duration::from_secs(5), "{waited:?}");
+    }
+
     #[test]
     fn only_the_hosts_that_send_honest_rate_limit_headers_are_believed() {
         let politeness = Politeness::new(Duration::from_secs(2));
@@ -932,7 +1040,7 @@ mod tests {
         // A shorter hold does not talk the longer one down.
         politeness.hold("example.org", Duration::from_millis(1));
         let started = Instant::now();
-        drop(politeness.lease("example.org"));
+        drop(politeness.lease("example.org", None));
         assert!(
             started.elapsed() >= Duration::from_millis(40),
             "{:?}",
