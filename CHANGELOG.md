@@ -5,8 +5,88 @@ and this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-09-21
+
+### Added
+
+- **Pictures inside articles.** The pictures an article carries are fetched,
+  decoded and drawn in it: the real thing in a terminal with a graphics
+  protocol, half blocks in one without, and `░` where one is going while it
+  is on its way, so the text does not move when it lands. A picture is drawn
+  at its own size when that fits — one image pixel per terminal pixel — and
+  fitted to the text column when it does not; nothing is ever made larger
+  than it is. None of them may take more than `[reading] image_rows`, which
+  is a third of the reader by default, because a picture that leaves two
+  lines of prose on the screen has taken the article over.
+- **A click opens a picture.** On a desktop it goes to whatever shows
+  pictures there, and what it is handed is the cached *file*, so an image
+  viewer opens rather than a browser; `[player] image` names another program.
+  On a session with no display of its own — over ssh, or a bare tty, where a
+  viewer would open on the wrong machine — it opens an overlay instead, which
+  grows the picture to the whole window and says by how much. `[reading]
+  click_picture` decides outright. In the overlay `n` and `p` walk the
+  article's pictures, `o` opens it outside, `y` copies its address, `esc`
+  closes.
+- **A picture cache under `cache/pictures`.** Named by a hash of the URL —
+  a filename built out of a string somebody else published is a filename that
+  can hold a `..` — holding the bytes as they arrived rather than as they were
+  drawn, and swept once a day with the entries: by age first, then oldest
+  first down to `[articles] pictures_mib`. Everything in it is re-fetchable,
+  which is why there is a ceiling rather than a retention policy.
+- **WebP.** Which is what a news site serves now. PNG, JPEG and the first
+  frame of a GIF as well; anything else, AVIF included, is its alt line, as is
+  a `data:` or an `http:` address.
+- **A failure degrades to the feed's own text.** Every entry carries the text
+  its feed gave from the moment it arrives, and a failed extraction never
+  overwrites it — so an entry that used to be blank with an explanation in the
+  middle of it is now the feed's summary with one line above it saying why
+  there is no more: `extraction failed: <why> · e retries · o opens the
+  page`. The 0.0.1 failures already in the file are backfilled by the
+  migration to schema 2.
+- **A free sample is the feed's text, not an article.** A page that answers
+  with two paragraphs and an invitation to subscribe is stored as the feed's
+  own words with `paywall` as the reason, rather than as a successful
+  extraction of 494 bytes.
+- **Transient failures come back round.** A `429`, a `5xx` and a timeout are
+  facts about that minute, so the entry rejoins the queue after
+  `[fetch] refresh_minutes`, doubling per attempt. A `401`, a `402`, a `403`,
+  a `404` and "does not read like an article" are facts about the page and
+  stay where they are — a browser's user agent gets the same codes, which has
+  been measured. Upgrading offers the failures already in the file another
+  go, where they earned one.
+- **Redirects are followed here, with a lease and a name for every hop.**
+  `ureq`'s own loop took no lease, so a wrapper URL reached the second host
+  at whatever rate the first answered — seventeen `429`s from `archive.is` in
+  one afternoon, every one of them reached through a `feedpress.me` wrapper
+  and every one of them blamed on the wrapper. A failure now names the host
+  that actually answered, and a chain that lands on a login or consent page
+  stops there rather than extracting it.
+- **Per-host gaps.** `reddit.com` every 61 seconds with its own
+  `x-ratelimit-reset` believed on top of that, `archive.is` every 10, and
+  `[fetch] host_intervals` for a site that has asked you to slow down.
+- **A page's own JSON-LD, and short articles.** The readability gate refused
+  five Arch news items and three Substack posts that were real, short
+  articles; it does not now, and where it still refuses, the `articleBody`
+  a page carries in its JSON-LD is tried before giving up.
+- **Site rules, as a table rather than a heuristic.** GamingOnLinux without
+  its footer, KitGuru without its share bar or its "Check Also" list, Indie
+  Retro News without `[Become a Patron!]`, Hearst without "Article continues
+  below this ad", and Phoronix reviews joined up across their pages — at most
+  eight, same host, same path, one lease each.
+- **Cleaner markdown.** Links with nothing visible in them are gone (they
+  were in 121 of 333 articles), hard line breaks survive the collapse (none
+  did), a lazy-loading page's real picture address is found in `srcset`, in a
+  `<picture>`, in `data-src` or in the `<noscript>`, and a plain-text feed
+  description keeps the lines it was written with.
+- **`[articles] timeout_secs`**, thirty seconds, separate from a feed's
+  fifteen: a feed is a file the server already has, and an article is often
+  rendered when it is asked for.
+
 ### Changed
 
+- **Three more settings rows**, and a mouse gesture: `pictures`,
+  `picture rows` and `click a picture` in the `,` box, and `click a picture ·
+  open it` in the reader's half of the mouse table.
 - **The filter says how to leave.** While the `/` field is open the status
   row stops offering the list's keys — every letter is typing, so none of
   them would work — and says `enter keep`, `esc clear` and that `alt+…`
@@ -18,6 +98,12 @@ and this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- **Reddit feeds work again.** `old.reddit.com/r/<sub>/.rss` now answers a 302
+  to a login page, which is the "not a feed (HTML page)" every Reddit feed in
+  a real list had recorded against it. The host is rewritten to
+  `www.reddit.com` on import, on `add`, and by the migration for the feeds
+  already in the file — and with the 61-second gap above, five subreddits
+  refresh at about one a minute instead of being rate limited.
 - **`/` filters the list you are looking at.** It always filtered the
   entries, whichever module had the keyboard, against what
   `docs/keys-and-mouse.md` said it did. In SOURCES it now narrows the feed
@@ -162,5 +248,6 @@ and this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html)
   as a snapshot, so a layout change is a diff of a drawn screen rather than
   an argument about rectangles.
 
-[Unreleased]: https://github.com/bstar/starwire/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/bstar/starwire/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/bstar/starwire/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/bstar/starwire/releases/tag/v0.0.1

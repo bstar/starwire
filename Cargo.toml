@@ -1,6 +1,6 @@
 [package]
 name = "starwire"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 rust-version = "1.90"
 description = "A stack-based terminal news reader in the STAR family"
