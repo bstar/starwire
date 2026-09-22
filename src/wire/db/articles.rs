@@ -6,7 +6,9 @@ use rusqlite::{params, OptionalExtension};
 
 use super::{now, stamp, Db};
 use crate::wire::extract::{ArticleResult, Policy};
-use crate::wire::feed::{ArticleStatus, ArticleView, EntryId, EntryRow, ParsedEntry};
+use crate::wire::feed::{
+    ArticleStatus, ArticleView, EntryId, EntryRow, FeedId, FolderId, ParsedEntry,
+};
 
 /// Create the `article` row that belongs to a newly inserted entry.
 ///
@@ -185,23 +187,85 @@ pub fn get(db: &Db, entry: EntryId) -> Result<Option<ArticleView>> {
 ///
 /// Three, and not configurable: a page that has failed three times is a
 /// paywall, a login wall or a site that does not want to be read by this,
-/// and the answer to all three is `o` rather than a fourth request. It is a
-/// real ceiling as of 0.0.2 -- until the retry classes below existed, nothing
-/// but `e` ever offered a failed row again and this number never came up.
+/// and the answer to all three is `o` rather than a fourth request -- unless
+/// somebody asks for another, which is what `e` in the reader and
+/// [`reoffer`] are for. It is a real ceiling as of 0.0.2: until the retry
+/// classes below existed, nothing but `e` ever offered a failed row again and
+/// this number never came up.
 pub const MAX_ATTEMPTS: i64 = 3;
+
+/// What [`reoffer`] writes into `retry_after`: due now, and outside the
+/// attempt ceiling.
+///
+/// A sentinel rather than a column of its own, because the column already
+/// says everything but this. `put` writes either a moment in the future --
+/// `now()` plus [`backoff_secs`] -- or `NULL` where there is nothing to wait
+/// for, and the migrations write `now()`; none of them can write a negative
+/// second. So a row carrying this is a row somebody asked for by name, and
+/// the next `put` takes it away again with everything else it writes.
+pub const ASKED_FOR: i64 = -1;
 
 /// The rows the extraction queue is allowed to take.
 ///
-/// Two kinds: a page nothing has been tried on, and a failure whose reason
-/// was a fact about today rather than about the page -- a 429, a 5xx or a
+/// Three kinds. A page nothing has been tried on; a failure whose reason was
+/// a fact about today rather than about the page -- a 429, a 5xx or a
 /// timeout, which `extract::run` marks by giving the result a
-/// `retry_in_secs` and `put` turns into the moment named here. Everything
-/// else stays where it is: retrying a 403 hourly costs a request and helps
-/// nobody, and `e` in the reader is there for the case where somebody
-/// disagrees.
-const QUEUE_WHERE: &str = "a.attempts < ?1 AND e.url IS NOT NULL
-     AND (a.status = 0
-          OR (a.status = 3 AND a.retry_after IS NOT NULL AND a.retry_after <= ?2))";
+/// `retry_in_secs` and `put` turns into the moment named here; and anything
+/// [`reoffer`] has marked, which is the one kind that ignores both the delay
+/// and [`MAX_ATTEMPTS`]. Everything else stays where it is: retrying a 403
+/// hourly costs a request and helps nobody, and `r` on the source and `e` in
+/// the reader are there for the case where somebody disagrees.
+const QUEUE_WHERE: &str = "e.url IS NOT NULL
+     AND ((a.status IN (0, 3) AND a.retry_after = ?3)
+          OR (a.attempts < ?1
+              AND (a.status = 0
+                   OR (a.status = 3 AND a.retry_after IS NOT NULL AND a.retry_after <= ?2))))";
+
+/// Which feeds a [`reoffer`] covers.
+///
+/// The database's own spelling of the window's `RefreshScope`, so that
+/// nothing under `db/` has to know the window's contract exists; `worker`
+/// maps one to the other, the same way it decides everything else about a
+/// job before handing it here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    Everything,
+    Feed(FeedId),
+    Folder(FolderId),
+}
+
+/// Offer every entry in `scope` that has no article of its own again, at
+/// once -- whatever its backoff says and whatever its attempts say. Answers
+/// with how many rows that was.
+///
+/// This is what a refresh somebody asked for adds to re-fetching the feed.
+/// The ceiling and the delay are both answers to "nobody asked": a page that
+/// has failed three times should not keep costing requests on a timer, and a
+/// 429 should be waited out rather than repeated. Somebody pressing `r` has
+/// asked, which is the one case neither rule is about -- and the reasons a
+/// page failed yesterday are exactly the ones that change (a site drops its
+/// firewall, a network comes back, a new rule lands in `extract::rules`).
+///
+/// Only status 0 and 3: a row holding the feed's own text (2) is content
+/// rather than a failure -- the free sample behind a paywall is stored that
+/// way, and `e` in the reader is still how somebody forces one of those --
+/// and a video (4) is complete the moment it arrives.
+pub fn reoffer(db: &Db, scope: Scope) -> Result<i64> {
+    let only = match scope {
+        Scope::Everything => String::new(),
+        Scope::Feed(id) => format!(" AND e.feed_id = {}", id.0),
+        Scope::Folder(id) => format!(" AND f.folder_id = {}", id.0),
+    };
+    // An entry with no link could never be fetched, so counting one would
+    // put a number in the status line that nothing would ever work through.
+    let sql = format!(
+        "UPDATE article SET retry_after = ?1
+         WHERE status IN (0, 3)
+           AND entry_id IN (SELECT e.id FROM entry e JOIN feed f ON f.id = e.feed_id
+                            WHERE e.url IS NOT NULL{only})"
+    );
+    Ok(db.conn.execute(&sql, [ASKED_FOR])? as i64)
+}
 
 /// Entries whose page is still worth fetching, newest first.
 ///
@@ -215,11 +279,11 @@ pub fn pending(db: &Db, limit: usize) -> Result<Vec<(EntryId, String)>> {
          JOIN entry e ON e.id = a.entry_id
          WHERE {QUEUE_WHERE}
          ORDER BY COALESCE(e.published, e.fetched_at) DESC, e.id DESC
-         LIMIT ?3"
+         LIMIT ?4"
     );
     let mut stmt = db.conn.prepare(&sql)?;
     let rows = stmt
-        .query_map(params![MAX_ATTEMPTS, now(), limit as i64], |r| {
+        .query_map(params![MAX_ATTEMPTS, now(), ASKED_FOR, limit as i64], |r| {
             Ok((EntryId(r.get(0)?), r.get::<_, String>(1)?))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -234,7 +298,7 @@ pub fn pending_count(db: &Db) -> Result<i64> {
     );
     Ok(db
         .conn
-        .query_row(&sql, params![MAX_ATTEMPTS, now()], |r| r.get(0))?)
+        .query_row(&sql, params![MAX_ATTEMPTS, now(), ASKED_FOR], |r| r.get(0))?)
 }
 
 /// Turn what somebody typed into an FTS5 query.
@@ -534,6 +598,201 @@ mod tests {
         assert!(
             !pending(&db, 10).unwrap().iter().any(|(e, _)| *e == id),
             "and it is not offered again"
+        );
+    }
+
+    /// The whole of what `r` on a source adds: every row in its scope that
+    /// has no article of its own is offered again at once, the ceiling and
+    /// the backoff included, and nothing outside the scope moves.
+    #[test]
+    fn a_refresh_reoffers_failed_and_pending_articles_in_its_scope() {
+        let mut db = Db::open_in_memory().unwrap();
+        let folder = feeds::folder_named(&db, "Tech").unwrap();
+        let one = feeds::add(
+            &db,
+            "https://one.org/f",
+            None,
+            FeedKind::Web,
+            None,
+            Some(folder),
+        )
+        .unwrap()
+        .id();
+        let two = feeds::add(
+            &db,
+            "https://two.org/f",
+            None,
+            FeedKind::Web,
+            None,
+            Some(folder),
+        )
+        .unwrap()
+        .id();
+
+        // Six rows in the first feed, one of each state an article can be
+        // in, and two in the second so the scope has something to leave
+        // alone.
+        let names = [
+            "pending",
+            "extracted",
+            "paywall",
+            "at-ceiling",
+            "backed-off",
+            "video",
+        ];
+        for feed in [one, two] {
+            entries::upsert_parsed(
+                &mut db,
+                feed,
+                FeedKind::Web,
+                &ParsedFeed {
+                    entries: names
+                        .iter()
+                        .map(|name| ParsedEntry {
+                            guid: format!("{feed}-{name}"),
+                            url: Some(format!("https://e.org/{feed}/{name}")),
+                            title: (*name).to_string(),
+                            ..ParsedEntry::default()
+                        })
+                        .collect(),
+                    ..ParsedFeed::default()
+                },
+            )
+            .unwrap();
+        }
+
+        // Written straight in: what is being tested is which rows a
+        // re-offer moves, and `put` cannot reach every one of these states
+        // without a network behind it.
+        let id = |feed: FeedId, name: &str| -> EntryId {
+            entries::page(&db, &Selection::Feed(feed), false, 0, 50)
+                .unwrap()
+                .rows
+                .into_iter()
+                .find(|r| r.title == name)
+                .unwrap_or_else(|| panic!("no {name} entry in {feed}"))
+                .id
+        };
+        let set = |entry: EntryId, status: i64, attempts: i64, retry: Option<i64>, error| {
+            db.conn
+                .execute(
+                    "UPDATE article SET status = ?2, attempts = ?3, retry_after = ?4, error = ?5
+                     WHERE entry_id = ?1",
+                    params![entry.0, status, attempts, retry, error],
+                )
+                .unwrap();
+        };
+        let later = now() + 3600;
+        for feed in [one, two] {
+            set(id(feed, "pending"), 0, 0, None, None);
+            set(id(feed, "extracted"), 1, 1, None, None);
+            set(id(feed, "paywall"), 2, 1, None, Some("paywall"));
+            set(id(feed, "at-ceiling"), 3, MAX_ATTEMPTS, None, Some("403"));
+            set(id(feed, "backed-off"), 3, 1, Some(later), Some("429"));
+            set(id(feed, "video"), 4, 0, None, None);
+        }
+        let retry_of = |entry: EntryId| -> Option<i64> {
+            db.conn
+                .query_row(
+                    "SELECT retry_after FROM article WHERE entry_id = ?1",
+                    [entry.0],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+
+        // One feed: its own three, and none of the other feed's.
+        assert_eq!(reoffer(&db, Scope::Feed(one)).unwrap(), 3);
+        for name in ["pending", "at-ceiling", "backed-off"] {
+            assert_eq!(retry_of(id(one, name)), Some(ASKED_FOR), "{name}");
+        }
+        assert_eq!(retry_of(id(one, "extracted")), None);
+        assert_eq!(retry_of(id(one, "paywall")), None, "a sample is content");
+        assert_eq!(retry_of(id(one, "video")), None);
+        for name in names {
+            let untouched = if name == "backed-off" {
+                Some(later)
+            } else {
+                None
+            };
+            assert_eq!(
+                retry_of(id(two, name)),
+                untouched,
+                "{name} in the other feed"
+            );
+        }
+
+        // And the row that had spent all three of its attempts is offered
+        // again, which is the whole point: an explicit request is not the
+        // timer the ceiling is there to stop.
+        let queued: Vec<EntryId> = pending(&db, 50)
+            .unwrap()
+            .into_iter()
+            .map(|(e, _)| e)
+            .collect();
+        assert!(queued.contains(&id(one, "at-ceiling")), "{queued:?}");
+        assert!(queued.contains(&id(one, "backed-off")), "{queued:?}");
+        assert!(!queued.contains(&id(two, "at-ceiling")), "{queued:?}");
+        assert!(!queued.contains(&id(one, "paywall")), "{queued:?}");
+        assert!(!queued.contains(&id(one, "video")), "{queued:?}");
+
+        // Everything: the other feed's three as well.
+        assert_eq!(reoffer(&db, Scope::Everything).unwrap(), 6);
+        assert_eq!(retry_of(id(two, "at-ceiling")), Some(ASKED_FOR));
+        assert_eq!(pending_count(&db).unwrap(), 6);
+
+        // A folder is the feeds in it, which here is both.
+        for feed in [one, two] {
+            for name in ["pending", "at-ceiling", "backed-off"] {
+                set(
+                    id(feed, name),
+                    if name == "pending" { 0 } else { 3 },
+                    1,
+                    None,
+                    None,
+                );
+            }
+        }
+        assert_eq!(reoffer(&db, Scope::Folder(folder)).unwrap(), 6);
+    }
+
+    /// A re-offer lasts until the attempt it asked for: whatever `put`
+    /// writes next takes the mark away, so one press of `r` is one more go
+    /// and not a row that is due for ever.
+    #[test]
+    fn what_a_reoffer_marks_is_cleared_by_the_attempt_it_asked_for() {
+        let db = seeded();
+        let id = first(&db);
+        for _ in 0..MAX_ATTEMPTS {
+            put(
+                &db,
+                id,
+                &ArticleResult {
+                    status: ArticleStatus::Failed,
+                    error: Some("the site answered 403".into()),
+                    ..ArticleResult::default()
+                },
+            )
+            .unwrap();
+        }
+        assert!(!pending(&db, 10).unwrap().iter().any(|(e, _)| *e == id));
+
+        assert_eq!(reoffer(&db, Scope::Everything).unwrap(), 2);
+        assert!(pending(&db, 10).unwrap().iter().any(|(e, _)| *e == id));
+
+        put(
+            &db,
+            id,
+            &ArticleResult {
+                status: ArticleStatus::Failed,
+                error: Some("the site answered 403".into()),
+                ..ArticleResult::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            !pending(&db, 10).unwrap().iter().any(|(e, _)| *e == id),
+            "one press of `r` buys one attempt, not a standing exemption"
         );
     }
 
