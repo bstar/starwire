@@ -19,8 +19,10 @@
 //!   CommonMark out.
 //! - [`db`] is the one thing that writes, and the whole of what is kept.
 //! - [`youtube`] and [`import`] are the two ways a feed list arrives.
-//! - [`open`] hands a link to a browser or a player; [`search`] is the `/`
-//!   filter over rows already loaded.
+//! - [`pictures`] fetches and decodes the pictures an article carries, and
+//!   keeps the bytes under `cache/`.
+//! - [`open`] hands a link to a browser, a player or an image viewer;
+//!   [`search`] is the `/` filter over rows already loaded.
 //!
 //! The core stores **CommonMark text**, not a parsed document: the UI parses
 //! it with `pulldown-cmark` at the width it is drawing, and nothing under
@@ -40,6 +42,7 @@ pub mod handle;
 pub mod import;
 pub mod net;
 pub mod open;
+pub mod pictures;
 pub mod search;
 pub mod state;
 #[cfg(test)]
