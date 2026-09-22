@@ -294,6 +294,17 @@ of protocol details still waiting on one. Specifically, still unverified:
   frame it draws is an `insta` snapshot. Nothing here has seen it in
   Alacritty, WezTerm, Ghostty or the macOS Terminal, and the graphics probe
   in particular is the part most likely to answer differently in one of them.
+- **Sixel and iTerm2, for an article's pictures.** Both are handled -- a
+  clipped placement falls back to half blocks, because neither crops one the
+  way kitty does -- and neither has been seen. The half-block path and the
+  kitty path have; a terminal that reports sixel is the one case where the
+  fallback decides what is on the screen rather than merely how it got there.
+- **The sub-cell gap under a picture.** `Resize::Fit` places a picture inside
+  its rectangle without stretching it, so a picture whose pixel height is not
+  a whole number of cells leaves a sliver of background at the bottom of its
+  last row. The rows are reserved by `ceil(px / cell)`, so the sliver is at
+  most one cell's worth and never overlaps the text; whether it is visible at
+  all depends on the terminal's own background, and nothing has measured it.
 - **The window, for a whole evening.** Forty-one feeds at sixty columns, an
   article a thousand rows long, a refresh running while somebody reads. The
   frame budget is thirty-three milliseconds and nothing in a drawn frame

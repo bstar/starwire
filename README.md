@@ -78,12 +78,16 @@ starwire extract https://www.phoronix.com/news/Linux-6.19-Features
 - **One file, and one folder.** Everything lives under `~/.local/starwire`:
   the config, the database, the log. `starwire fetch` from a systemd timer
   keeps it current while the reader is closed.
+- **Pictures, in the terminal.** The pictures an article carries are drawn in
+  it — the real thing where the terminal has a graphics protocol, half blocks
+  where it has not, and never more than a third of the page. Click one to
+  open it properly.
 - **Headless all the way down.** Nothing in the core knows a terminal exists,
   which is why every one of those commands works in a pipe or a cron job.
 
 ## What it does not do yet
 
-Beyond this release: pictures inside articles, find-in-article, per-feed
+Beyond this release: animated pictures and AVIF, find-in-article, per-feed
 refresh intervals, folders inferred from a newsboat file's comment headers,
 podcasts and enclosures, and an optional summary from a local model.
 [Status](docs/status.md) keeps that list, and the honest one beside it of what

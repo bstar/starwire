@@ -23,6 +23,8 @@ only this file.
 | `width` | `80` | Columns of text, centred in the reader. `<` and `>` step it by eight. |
 | `show_byline` | `true` | The author, site and date line under the title. |
 | `mark_read_on_open` | `true` | Opening an entry marks it read; `m` puts it back. |
+| `image_rows` | `0` | The most rows one picture may take. `0` is a third of the reader's height, which is what keeps a page of prose a page of prose. |
+| `click_picture` | `"auto"` | What a click on a picture does: `auto`, `viewer` or `external`. `auto` opens the overlay on a session with no display of its own — over ssh, or a bare tty, where an image viewer would open on the wrong machine — and hands it to the desktop otherwise. |
 
 ## `[fetch]` — how and how often feeds are pulled
 
@@ -47,7 +49,8 @@ only this file.
 | `max_markdown_bytes` | `524288` | Markdown longer than this is cut at a paragraph boundary. |
 | `keep_days` | `30` | Entries older than this are swept. |
 | `max_entries_per_feed` | `2000` | And the second bound, which is the one that matters for a busy feed: a month of `hnrss/newcomments` is about a hundred thousand rows. |
-| `images` | `true` | Keep images as images. `false` leaves the alt text behind as a paragraph. Nothing is downloaded either way in this release. |
+| `images` | `true` | Keep images as images, fetch them and draw them. `false` leaves the alt text behind as a paragraph and fetches nothing. |
+| `pictures_mib` | `256` | How large `cache/pictures` may grow before the oldest files are swept. Everything in it is re-fetchable. |
 | `page_size` | `200` | How many entries are loaded at a time. Clamped to 10–5000. |
 
 **Starred entries survive both retention bounds.** Starring something is how
@@ -68,17 +71,20 @@ every plain `[fetch]` key: a line written below it belongs to it.
 [player]
 video = ["mpv", "--terminal=no", "--"]
 browser = []
+image = []
 ```
 
-Both are `argv`, never shell lines: the URL is appended as exactly one more
-argument, whatever is in it. An empty `browser` means the desktop's own opener
-— `open` on macOS, `xdg-open` elsewhere. `video = []` opens videos in the
-browser too.
+All three are `argv`, never shell lines: what is opened is appended as exactly
+one more argument, whatever is in it. An empty `browser` means the desktop's
+own opener — `open` on macOS, `xdg-open` elsewhere. `video = []` opens videos
+in the browser too. `image` is what a picture clicked in an article is handed
+to, and what it is handed is the cached *file*, which is why the desktop's own
+opener picks an image viewer rather than a browser.
 
 `--terminal=no` matters for `mpv`: without it, it takes over the terminal
 STAR/WIRE is drawing in.
 
-The `,` overlay deliberately has no row for either of these. They are lists of
+The `,` overlay deliberately has no row for any of these. They are lists of
 strings, and the overlay writes a single scalar to a single line; a row that
 changed the player for the run and forgot it on the next would be worse than
 no row. Edit them here.

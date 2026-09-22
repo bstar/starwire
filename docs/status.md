@@ -18,17 +18,20 @@ against the real thing this says so.
 | **YouTube** | Six spellings of a channel reduce to one feed row. Handles and video pages resolve by reading the page, falling back to `yt-dlp`. |
 | **The command line** | `fetch`, `list`, `show`, `add`, `remove`, `import`, `export`, `youtube`, `extract`, and `--replay` to run the whole thing with no network. |
 | **The running core** | One thread owns the database; a pool fetches and extracts on an urgent lane and a background one. One pure `apply` is the only writer, a cancel drops what is queued before it opens a connection, and another process's writes are noticed through `PRAGMA data_version`. `Handle` is the contract the window programs against: send a command, drain events, read the state. |
-| **The window** | The column of three docked modules, the stack they are drilled through, the reader's markdown pipeline, the six overlays, the key table and the `[wire]` theme roles. `starwire` with no arguments takes the terminal; [The stack](the-stack.md) describes how it moves and [Keys and the mouse](keys-and-mouse.md) is generated from the table itself. Whole frames are kept as snapshots, so a layout change is a diff of a drawn screen. |
+| **Pictures** | The pictures an article carries are fetched, decoded and drawn: at their own size where they fit, fitted to the text column where they do not, and never taller than `[reading] image_rows` — a third of the reader by default. `░` while one is on its way; the `[image: alt]` line where one cannot be had. A click opens it, in the desktop's own viewer or in an overlay that grows it to the window where the session has no display of its own. The bytes are kept under `cache/pictures` and swept with the entries. |
+| **The window** | The column of three docked modules, the stack they are drilled through, the reader's markdown pipeline, the seven overlays, the key table and the `[wire]` theme roles. `starwire` with no arguments takes the terminal; [The stack](the-stack.md) describes how it moves and [Keys and the mouse](keys-and-mouse.md) is generated from the table itself. Whole frames are kept as snapshots, so a layout change is a diff of a drawn screen. |
 
 ## Not started
 
-Nothing in 0.0.1. What is deliberately outside it is below.
+Nothing in 0.0.2. What is deliberately outside it is below.
 
-## Deliberately outside 0.0.1
+## Deliberately outside 0.0.2
 
-- Pictures inside articles. The markdown keeps them and the reader draws an
-  `[image: alt]` line -- or just `[image]` when the page gave no alt text;
-  nothing is downloaded.
+- Animated pictures. A GIF in an article is drawn as its first frame, which
+  is what the decoder hands over; nothing here has a clock for it, and the
+  `gif` feature is not compiled in.
+- AVIF, which no pure-Rust decoder reads yet. An AVIF picture is its alt
+  line.
 - Find-in-article.
 - Per-feed refresh intervals.
 - Folders inferred from a newsboat file's `# comment` headers. The importer

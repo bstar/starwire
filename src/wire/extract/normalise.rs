@@ -16,11 +16,12 @@ pub struct Options {
     /// paragraph boundary.
     pub max_bytes: usize,
     /// Keep `![alt](src)` as an image. `false` leaves the alt text behind as
-    /// a plain paragraph, for a reader who does not want a line of
-    /// `[image: …]` every third paragraph.
+    /// a plain paragraph, for a reader who does not want pictures at all.
     ///
-    /// Either way nothing is *fetched*: pictures inside articles are not in
-    /// 0.0.1, and the reader draws a kept image as `[image: alt]`.
+    /// It is the switch at *this* end of one setting. `[articles] images`
+    /// also stops the reader fetching anything -- see `wire::pictures` --
+    /// so turning it off costs the pictures of articles stored afterwards
+    /// and the fetching of the ones stored before.
     pub images: bool,
 }
 

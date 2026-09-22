@@ -54,7 +54,7 @@ with every role derived.
 | `video_fg` | the `▶` on a video | base16 `base0E` (magenta) |
 | `byline_fg` | `author · site · date · N min` under a title | the theme's row-metadata colour |
 | `rule_fg` | a thematic break, drawn as a row of `─` | the theme's divider colour |
-| `image_fg` | `[image: alt]`, which is what a picture is for now | base16 `base0C` (cyan) |
+| `image_fg` | `[image: alt]`, where a picture cannot be drawn | base16 `base0C` (cyan) |
 
 Every built-in is checked against WCAG AA in the test suite. Anything carrying
 words clears 4.5:1 against what it is drawn on; a role that carries no letters
@@ -62,5 +62,7 @@ of its own — the star, the video arrow, the rule — clears 3:1. `code_bg` is
 the odd one: it is a background, so what is checked is the code *on* it, which
 is why it is pushed away from the row colour rather than away from the panel.
 
-Pictures inside articles are not in 0.0.1 — the reader draws `[image: alt]`
-where one would go. See [Status](status.md).
+`image_fg` is for the line that stands in for a picture: one that will never
+arrive, one whose address cannot be fetched, and every picture at all when
+`[articles] images` is off or `[ui] graphics = "off"`. A picture that is drawn
+carries no theme colour, being a picture. See [Reading](reading.md).

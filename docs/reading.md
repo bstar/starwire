@@ -149,17 +149,50 @@ entry, at most three times ever. The politeness is in the construction:
 Everything is https. A feed URL written as `http://` is rewritten on the way
 in, and a redirect to plaintext is refused.
 
-## Images
+## Pictures
 
-Pictures inside articles are not drawn in this release. An image in the
-markdown is kept as an image and the reader draws it as an `[image: alt]` line
-— or just `[image]` when the page gave no alt text, which is most decorative
-header images. Nothing is downloaded. `[articles] images = false` leaves the
-alt text behind as a plain paragraph instead.
+**The pictures an article carries are drawn in it.** In a terminal with a
+graphics protocol they are the pictures; in one without, half blocks, which
+are coarse and are still a picture. `░` stands where one is going while it is
+on its way, so the text does not move when it lands.
+
+A picture is drawn at **its own size** when that fits: one image pixel per
+terminal pixel, which on a typical font is a 640-pixel-wide photograph across
+eighty columns. One wider than the text column is fitted to it, and nothing is
+ever made *bigger* than it is — a 160-pixel logo blown across a third of the
+page is not a service.
+
+**Never more than a third of the reader.** `[reading] image_rows` is the cap
+in rows, and `0` means a third of whatever height the panel has. It is the
+reason a page of prose stays a page of prose: a picture that leaves two lines
+of text on the screen has taken the article over.
+
+**A click opens it.** On a desktop it goes to whatever shows pictures there —
+the cached file, so an image viewer opens rather than a browser, and `[player]
+image` names another program if you would rather. On a session with no display
+of its own — over ssh, or a bare tty — it opens an overlay instead, which
+grows the picture to the whole window and says by how much. `[reading]
+click_picture` is `auto`, `viewer` or `external` if you would rather decide.
+In the overlay, `n` and `p` walk the article's pictures, `o` opens it outside,
+`y` copies its address and `esc` closes.
+
+**Two switches turn them off.** `[articles] images = false` leaves the alt
+text behind as a plain paragraph and fetches nothing; `[ui] graphics = "off"`
+draws the `[image: alt]` line instead of the picture. Either way what is drawn
+is `[image: alt]`, or just `[image]` when the page gave no alt text, which is
+most decorative header images.
+
+The bytes live in `~/.local/starwire/cache/pictures`, named by a hash of the
+URL and swept once a day with the entries — by age first, then oldest-first
+down to `[articles] pictures_mib`. Everything in it is re-fetchable, which is
+why there is a ceiling rather than a retention policy. PNG, JPEG, WebP and the
+first frame of a GIF are drawn; anything else, AVIF included, is its alt line.
 
 The address kept for one is the address the picture is really at, which on a
 modern page takes finding: the `src` is often a spacer or a base64 blur, with
 the real one in `srcset`, in a `<picture>`, in `data-src`, or in the
 `<noscript>` the page shows to a browser without JavaScript. A picture whose
 only address is its own bytes is dropped and its alt text kept: nothing can
-fetch it, and one blur placeholder is two kilobytes of the size cap.
+fetch it, and one blur placeholder is two kilobytes of the size cap. An
+`http:` picture is its alt line too — everything this program fetches is
+https, and one picture is not the reason to keep a second agent that is not.
