@@ -69,6 +69,15 @@ pub struct Reading {
     pub show_byline: bool,
     /// Opening an entry marks it read. `m` undoes it.
     pub mark_read_on_open: bool,
+    /// The most rows one picture in an article may take. `0` is automatic:
+    /// a third of the reader's body, which is what keeps a page of prose a
+    /// page of prose.
+    pub image_rows: u16,
+    /// What a click on a picture does: `auto`, `viewer` or `external`.
+    /// `auto` is the overlay when this session has no display of its own --
+    /// over ssh an image viewer opens on the far machine, where nobody is
+    /// sitting -- and the desktop's own viewer otherwise.
+    pub click_picture: String,
 }
 
 impl Default for Reading {
@@ -79,6 +88,8 @@ impl Default for Reading {
             width: 80,
             show_byline: true,
             mark_read_on_open: true,
+            image_rows: 0,
+            click_picture: "auto".into(),
         }
     }
 }
@@ -126,6 +137,8 @@ pub struct Articles {
     pub keep_days: u32,
     pub max_entries_per_feed: usize,
     pub images: bool,
+    /// How large the picture cache may grow before the oldest files go.
+    pub pictures_mib: u64,
     pub page_size: usize,
 }
 
@@ -140,6 +153,7 @@ impl Default for Articles {
             keep_days: core.keep_days,
             max_entries_per_feed: core.max_entries_per_feed,
             images: core.images,
+            pictures_mib: core.pictures_mib,
             page_size: core.page_size,
         }
     }
@@ -154,6 +168,10 @@ pub struct Player {
     /// Empty is the desktop's own opener: `open` on macOS, `xdg-open`
     /// elsewhere.
     pub browser: Vec<String>,
+    /// What a picture is handed to, when a click opens one outside. Empty is
+    /// the desktop's own opener again; the argument is the cached file where
+    /// there is one, so this opens an image viewer rather than a browser.
+    pub image: Vec<String>,
 }
 
 impl Default for Player {
@@ -162,6 +180,7 @@ impl Default for Player {
         Self {
             video: core.video,
             browser: core.browser,
+            image: core.image,
         }
     }
 }
@@ -236,11 +255,13 @@ impl Config {
                 keep_days: self.articles.keep_days,
                 max_entries_per_feed: self.articles.max_entries_per_feed,
                 images: self.articles.images,
+                pictures_mib: self.articles.pictures_mib,
                 page_size: self.articles.page_size.clamp(10, 5000),
             },
             player: wire::PlayerConfig {
                 video: self.player.video.clone(),
                 browser: self.player.browser.clone(),
+                image: self.player.image.clone(),
             },
             youtube: wire::YoutubeConfig {
                 cookies_from_browser: self.youtube.cookies_from_browser.clone(),
@@ -253,6 +274,14 @@ impl Config {
                     self.youtube.yt_dlp.trim().to_string()
                 },
             },
+            // Not a preference: where this machine keeps the bytes it pulled
+            // off somebody else's server. `None` on a machine with no home
+            // directory, which costs the disk cache and nothing else -- a
+            // picture is then fetched again next time it is looked at.
+            pictures_dir: crate::paths::PATHS
+                .cache_dir()
+                .ok()
+                .map(|dir| dir.join("pictures")),
         }
     }
 }
@@ -281,6 +310,12 @@ width = 80
 show_byline = true
 # Opening an entry marks it read. `m` puts it back.
 mark_read_on_open = true
+# The most rows one picture may take. 0 is automatic: a third of the reader.
+image_rows = 0
+# What a click on a picture does. "auto" opens the overlay when this session
+# has no display of its own -- over ssh, or on a bare tty -- and hands the
+# picture to the desktop otherwise. "viewer" and "external" say which.
+click_picture = "auto"
 
 [fetch]
 # How often a background refresh of every feed starts, in minutes.
@@ -322,9 +357,12 @@ max_markdown_bytes = 524288
 keep_days = 30
 # And the second bound, which is the one that matters for a busy feed.
 max_entries_per_feed = 2000
-# Keep images as images. false leaves the alt text behind as a paragraph.
-# Nothing is downloaded either way in this release.
+# Keep images as images. false leaves the alt text behind as a paragraph and
+# downloads nothing.
 images = true
+# How large ~/.local/starwire/cache/pictures may grow before the oldest files
+# are swept. They are all re-fetchable; this is a cache and nothing else.
+pictures_mib = 256
 # How many entries are loaded at a time.
 page_size = 200
 
@@ -333,6 +371,9 @@ page_size = 200
 video = ["mpv", "--terminal=no", "--"]
 # Empty is the desktop's own opener: `open` on macOS, `xdg-open` elsewhere.
 browser = []
+# What a picture clicked in an article is handed to. Empty is the desktop's
+# opener again, which on a picture is an image viewer rather than a browser.
+image = []
 
 [youtube]
 # Which browser yt-dlp should take cookies from, for `starwire youtube sync`.
@@ -425,11 +466,13 @@ mod tests {
                 keep_days: 7,
                 max_entries_per_feed: 50,
                 images: false,
+                pictures_mib: 64,
                 page_size: 25,
             },
             player: Player {
                 video: vec!["vlc".into()],
                 browser: vec!["firefox".into()],
+                image: vec!["feh".into()],
             },
             youtube: Youtube {
                 cookies_from_browser: "firefox".into(),
@@ -455,17 +498,36 @@ mod tests {
         assert_eq!(core.articles.keep_days, 7);
         assert_eq!(core.articles.max_entries_per_feed, 50);
         assert!(!core.articles.images);
+        assert_eq!(core.articles.pictures_mib, 64);
         assert_eq!(core.articles.page_size, 25);
 
         assert_eq!(core.player.video, vec!["vlc"]);
         assert_eq!(core.player.browser, vec!["firefox"]);
+        assert_eq!(core.player.image, vec!["feh"]);
         assert_eq!(core.youtube.cookies_from_browser, "firefox");
         assert_eq!(core.youtube.yt_dlp, "/usr/bin/yt-dlp");
     }
 
+    /// Every default in the file is the core's own default. The picture
+    /// directory is the exception and is not a preference: it is where this
+    /// machine keeps a cache, and `WireConfig::default()` has no machine.
     #[test]
     fn the_defaults_agree_with_the_cores_defaults() {
-        assert_eq!(Config::default().core(), wire::WireConfig::default());
+        let core = Config::default().core();
+        assert_eq!(
+            core,
+            wire::WireConfig {
+                pictures_dir: core.pictures_dir.clone(),
+                ..wire::WireConfig::default()
+            }
+        );
+        assert!(
+            core.pictures_dir
+                .as_ref()
+                .is_none_or(|d| d.ends_with("cache/pictures")),
+            "{:?}",
+            core.pictures_dir
+        );
     }
 
     #[test]
@@ -494,6 +556,8 @@ mod tests {
                 width: 100,
                 show_byline: false,
                 mark_read_on_open: false,
+                image_rows: 12,
+                click_picture: "viewer".into(),
             },
             ..Config::default()
         };

@@ -65,6 +65,11 @@ pub struct WireConfig {
     pub articles: ArticlesConfig,
     pub player: PlayerConfig,
     pub youtube: YoutubeConfig,
+    /// Where a fetched picture is kept, under the cache directory. `None`
+    /// means no disk cache at all -- a machine with no home directory, and
+    /// every test that has not asked for one -- which costs a second fetch
+    /// and nothing else.
+    pub pictures_dir: Option<std::path::PathBuf>,
 }
 
 /// How and how often feeds are pulled.
@@ -135,9 +140,13 @@ pub struct ArticlesConfig {
     /// month, and `keep_days` on its own would keep every one of them.
     pub max_entries_per_feed: usize,
     /// Keep `![alt](src)` in the markdown. `false` leaves the alt text
-    /// behind as a paragraph instead. Nothing is downloaded either way in
-    /// 0.0.1 -- the reader draws a kept image as an `[image: alt]` line.
+    /// behind as a paragraph instead, and nothing is fetched: it is the one
+    /// switch that turns the pictures off at both ends.
     pub images: bool,
+    /// How large the picture cache may grow before the oldest files are
+    /// swept. Everything in it is re-fetchable, which is why there is a
+    /// ceiling at all rather than a retention policy.
+    pub pictures_mib: u64,
     pub page_size: usize,
 }
 
@@ -151,6 +160,7 @@ impl Default for ArticlesConfig {
             keep_days: 30,
             max_entries_per_feed: 2000,
             images: true,
+            pictures_mib: 256,
             page_size: 200,
         }
     }
@@ -164,6 +174,9 @@ pub struct PlayerConfig {
     pub video: Vec<String>,
     /// What a link is handed to. Empty is the desktop's own opener.
     pub browser: Vec<String>,
+    /// What a picture is handed to. Empty is the desktop's own opener, which
+    /// for a file on disk is an image viewer rather than a browser.
+    pub image: Vec<String>,
 }
 
 impl Default for PlayerConfig {
@@ -174,6 +187,7 @@ impl Default for PlayerConfig {
             // with a dash is still a URL.
             video: vec!["mpv".into(), "--terminal=no".into(), "--".into()],
             browser: Vec::new(),
+            image: Vec::new(),
         }
     }
 }
