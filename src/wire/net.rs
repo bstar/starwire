@@ -54,6 +54,11 @@ pub struct RequestOptions {
     /// the table or the reader has a number for -- see
     /// [`Politeness::interval_for_request`].
     pub host_gap: Option<Duration>,
+    /// The `User-Agent` this one request names itself with, where the honest
+    /// one was refused. Set only by the second of the two requests
+    /// `extract::run` makes at a 403, and it brings a browser's `Accept` and
+    /// `Accept-Language` with it: see [`BROWSER_USER_AGENT`].
+    pub user_agent: Option<String>,
 }
 
 impl RequestOptions {
@@ -184,6 +189,52 @@ pub trait Http: Send + Sync {
 /// it -- nothing here reaches reddit.com faster than once a minute.
 pub const PICTURE_GAP: Duration = Duration::from_millis(250);
 
+/// A desktop Chrome's `User-Agent`, for a page behind an edge firewall.
+///
+/// Measured against `iflscience.com` in September 2026: CloudFront answers the
+/// honest `starwire/0.0.2 (+https://github.com/bstar/starwire)` with a 403,
+/// `x-cache: Error from cloudfront` and a 919-byte error page -- bare `curl`
+/// gets the same -- and answers this string with the whole article. That is a
+/// firewall filtering on the user agent, not a paywall: there is nothing to
+/// pay and nothing to log into, and the page is public to anybody with a
+/// browser.
+///
+/// The audit that classed a 403 as permanent measured NYT, WSJ, Reuters and
+/// Medium, where a browser's user agent is refused the same way. True there,
+/// and not universal, which is the whole of the difference this exists for.
+///
+/// **The honest agent is always tried first.** Naming the program and linking
+/// the repository is what lets an unhappy administrator find out who to ask,
+/// and it is worth keeping for every site that does not refuse it; this is
+/// only ever the second request, only after a 403, and only from
+/// `extract::run`. A 401 or a 402 is a wall by definition and is never retried
+/// this way.
+pub const BROWSER_USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) \
+AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36";
+
+/// What the browser this claims to be would ask for, and in what language.
+///
+/// Sent with [`BROWSER_USER_AGENT`] and only with it. A firewall that reads the
+/// user agent reads the rest of the header set as well, and a request that says
+/// Chrome and then asks for `*/*;q=0.1` in no particular language is a shape no
+/// browser has. These are the two headers the request that was measured to work
+/// carried.
+const BROWSER_ACCEPT: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+const BROWSER_ACCEPT_LANGUAGE: &str = "en-GB,en;q=0.9";
+
+/// The `Accept` and the `Accept-Language` one request goes out with.
+///
+/// A function of the options alone, so that what a browser request sends can be
+/// tested without a socket. A request naming itself a browser sends the
+/// browser's pair *instead of* this program's narrower `Accept` rather than as
+/// well: two `Accept` headers is not something a browser does either.
+fn accept_headers(options: &RequestOptions) -> (Option<&str>, Option<&'static str>) {
+    match options.user_agent {
+        Some(_) => (Some(BROWSER_ACCEPT), Some(BROWSER_ACCEPT_LANGUAGE)),
+        None => (options.accept.as_deref(), None),
+    }
+}
+
 /// How many hops a redirect chain may take.
 ///
 /// `ureq` follows redirects itself and is told here not to. Its loop takes no
@@ -246,8 +297,18 @@ impl Http for Live {
                     .timeout_global(Some(Duration::from_secs(secs.max(1))))
                     .build();
             }
-            if let Some(accept) = &options.accept {
+            let (accept, accept_language) = accept_headers(options);
+            if let Some(accept) = accept {
                 req = req.header("Accept", accept);
+            }
+            if let Some(language) = accept_language {
+                req = req.header("Accept-Language", language);
+            }
+            if let Some(user_agent) = &options.user_agent {
+                // Overrides the agent's own rather than needing a second
+                // agent: `ureq` adds the configured user agent only to a
+                // request that carries no header of its own.
+                req = req.header("User-Agent", user_agent);
             }
             if let Some(etag) = &options.etag {
                 req = req.header("If-None-Match", etag);
@@ -817,6 +878,36 @@ mod tests {
 
         let conditional = RequestOptions::feed(1).conditional(Some("\"e\"".into()), None);
         assert_eq!(conditional.etag.as_deref(), Some("\"e\""));
+    }
+
+    /// The browser's headers go out together or not at all, and a page is
+    /// asked with the honest agent until something refuses it.
+    #[test]
+    fn a_browsers_headers_are_sent_with_its_user_agent_and_not_otherwise() {
+        let page = RequestOptions::page(1 << 20);
+        assert_eq!(
+            page.user_agent, None,
+            "the agent that names the program is always tried first"
+        );
+        let (accept, language) = accept_headers(&page);
+        assert_eq!(accept, page.accept.as_deref(), "this program's own Accept");
+        assert_eq!(language, None, "and no Accept-Language at all");
+
+        let browser = RequestOptions {
+            user_agent: Some(BROWSER_USER_AGENT.to_string()),
+            ..RequestOptions::page(1 << 20)
+        };
+        let (accept, language) = accept_headers(&browser);
+        assert_eq!(accept, Some(BROWSER_ACCEPT));
+        assert_eq!(language, Some(BROWSER_ACCEPT_LANGUAGE));
+        assert!(
+            BROWSER_USER_AGENT.starts_with("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"),
+            "the string that was measured, in one piece: {BROWSER_USER_AGENT}"
+        );
+        assert!(
+            BROWSER_USER_AGENT.contains("Chrome/"),
+            "{BROWSER_USER_AGENT}"
+        );
     }
 
     #[test]

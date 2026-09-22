@@ -41,6 +41,12 @@
 //! agent that names the program and links the repository, and at most three
 //! attempts at any one entry ever. This fetches pages a person subscribed to
 //! and asked to read, one per entry, once.
+//!
+//! One page may cost one request more than that: a 403 is asked again as a
+//! browser, because an edge firewall filtering on the user agent is not a
+//! paywall and IFLScience is behind one. It is the second request or none --
+//! the honest agent goes first, and a site that does not refuse it never sees
+//! the other.
 
 pub mod images;
 pub mod markdown;
@@ -52,7 +58,7 @@ use anyhow::Result;
 use url::Url;
 
 use super::feed::{ArticleStatus, EntryKind, FeedKind};
-use super::net::{Http, RequestOptions};
+use super::net::{Http, RequestOptions, BROWSER_USER_AGENT};
 
 /// What should be done with an entry's link.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,11 +125,12 @@ pub struct ArticleResult {
     /// How long to wait before another attempt is worth making, in seconds,
     /// where one is worth making at all.
     ///
-    /// `None` is the ordinary case and means never: a 401, a 403, a 404 and a
-    /// page that does not read like an article are all facts about the page
-    /// rather than about today, and a browser's user agent is measured to get
-    /// the same three codes. `Some` is a 429, a 5xx or a timeout -- twenty-four
-    /// of the eighty-five failures in the reference database -- and
+    /// `None` is the ordinary case and means never: a 401, a 404 and a page
+    /// that does not read like an article are all facts about the page rather
+    /// than about today, and so is a 403 that refused a browser's user agent
+    /// as well as this program's -- which is asked inside the attempt, not in
+    /// a later one. `Some` is a 429, a 5xx or a timeout -- twenty-four of the
+    /// eighty-five failures in the reference database -- and
     /// `db::articles::put` turns it into the moment the entry rejoins the
     /// queue, doubling it for each attempt already spent.
     pub retry_in_secs: Option<i64>,
@@ -196,13 +203,36 @@ impl From<&super::ArticlesConfig> for Limits {
 pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> {
     let parsed = Url::parse(url).map_err(|e| anyhow::anyhow!("{url} is not a URL: {e}"))?;
 
-    let response = match http.get(&parsed, &limits.request()) {
+    let mut options = limits.request();
+    let mut response = match http.get(&parsed, &options) {
         Ok(r) => r,
         Err(e) => {
             let retry = transport_is_transient(&e).then_some(limits.retry_base_secs);
             return Ok(failed(url, e.to_string()).retrying(retry));
         }
     };
+
+    // A 403 is not always a wall. Some sites sit behind an edge firewall that
+    // filters on the user agent and nothing else: `iflscience.com` answers
+    // this program's with a CloudFront 403 and a browser's with the whole
+    // article, and twenty-two entries in the reference database are that
+    // rather than a paywall. So one more request, as a browser, inside the
+    // same attempt -- and only for a 403, because a 401 or a 402 is a wall by
+    // definition and means what it says. Anything but a success leaves the
+    // honest answer to be recorded, which is the one worth reading.
+    if response.status == 403 {
+        let browser = RequestOptions {
+            user_agent: Some(BROWSER_USER_AGENT.to_string()),
+            ..limits.request()
+        };
+        if let Ok(second) = http.get(&parsed, &browser) {
+            if second.is_ok() {
+                response = second;
+                options = browser;
+            }
+        }
+    }
+
     if !response.is_ok() {
         let retry = status_is_transient(response.status).then(|| {
             // A server that says how long to wait is believed where it asks
@@ -251,7 +281,7 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
     // same host and under the same path. Taken rather than copied: a page is
     // allowed to be two megabytes.
     let mut article_html = std::mem::take(&mut extracted.content_html);
-    article_html.push_str(&follow_pages(http, &html, &final_url, limits));
+    article_html.push_str(&follow_pages(http, &html, &final_url, &options));
 
     // The pictures' addresses, before the converter -- which reads `src` and
     // nothing else, so a lazy-loaded page would otherwise reduce to a list of
@@ -325,7 +355,17 @@ pub fn run(http: &dyn Http, url: &str, limits: Limits) -> Result<ArticleResult> 
 /// asks for. Every page costs a lease like any other request, the chain stops
 /// at the first page that does not answer, and a page that points back at one
 /// already read ends it: a pagination loop must not be eight requests.
-fn follow_pages(http: &dyn Http, first_html: &str, first_url: &Url, limits: Limits) -> String {
+///
+/// Asked with whatever options the first page came back to, browser user agent
+/// included: a site whose firewall refused the honest agent on page one
+/// refuses it on page two as well, and finding that out again per page would
+/// double the requests.
+fn follow_pages(
+    http: &dyn Http,
+    first_html: &str,
+    first_url: &Url,
+    options: &RequestOptions,
+) -> String {
     let host = first_url.host_str().unwrap_or("");
     let Some(next_page) = rules::for_host(host).and_then(|rule| rule.next_page.as_ref()) else {
         return String::new();
@@ -346,7 +386,7 @@ fn follow_pages(http: &dyn Http, first_html: &str, first_url: &Url, limits: Limi
         if seen.contains(&next) {
             break;
         }
-        let Ok(response) = http.get(&next, &limits.request()) else {
+        let Ok(response) = http.get(&next, options) else {
             break;
         };
         if !response.is_ok() {
@@ -403,8 +443,13 @@ impl ArticleResult {
 ///
 /// Measured rather than assumed: of the eighty-five failures in the reference
 /// database, the seventeen 429s were one host being asked too fast and the
-/// 401s, 402s and 403s answered a browser's user agent with the same code.
-/// So a 429 and a 5xx come back and the rest do not.
+/// 401s and 402s answered a browser's user agent with the same code. So a 429
+/// and a 5xx come back and the rest do not.
+///
+/// A 403 is the one this does not decide on its own. `run` asks it again as a
+/// browser inside the attempt, so what reaches here is a 403 that refused that
+/// too -- and coming back to it in an hour with the same two requests would
+/// cost two requests and help nobody.
 fn status_is_transient(status: u16) -> bool {
     status == 429 || (500..600).contains(&status)
 }
@@ -589,6 +634,202 @@ mod tests {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/replay")
     }
 
+    /// The pages the fake below serves, which are the ones `testdata/replay`
+    /// serves too: the question here is the status code, not the HTML.
+    const A_PAGE: &str = include_str!("../../../testdata/pages/article.html");
+    const PAGE_ONE: &str = include_str!("../../../testdata/pages/paged-1.html");
+    const PAGE_TWO: &str = include_str!("../../../testdata/pages/paged-2.html");
+
+    /// An `Http` that answers by user agent, which is the whole question an
+    /// edge firewall asks. `Replay` cannot: it serves a file per URL and never
+    /// looks at the options.
+    struct ByUserAgent {
+        /// What this program's own agent is answered with, and what a browser
+        /// is answered with.
+        honest: u16,
+        browser: u16,
+        /// The user agent of every request, in order.
+        asked: std::sync::Mutex<Vec<Option<String>>>,
+    }
+
+    impl ByUserAgent {
+        fn new(honest: u16, browser: u16) -> Self {
+            Self {
+                honest,
+                browser,
+                asked: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn asked(&self) -> Vec<Option<String>> {
+            self.asked.lock().unwrap().clone()
+        }
+    }
+
+    impl Http for ByUserAgent {
+        fn get(
+            &self,
+            url: &Url,
+            options: &RequestOptions,
+        ) -> std::result::Result<crate::wire::net::Response, crate::wire::net::NetError> {
+            self.asked.lock().unwrap().push(options.user_agent.clone());
+            let status = match options.user_agent {
+                Some(_) => self.browser,
+                None => self.honest,
+            };
+            let body = if (200..300).contains(&status) {
+                match url.path() {
+                    "/review/a-long-test/1" => PAGE_ONE,
+                    "/review/a-long-test/2" => PAGE_TWO,
+                    _ => A_PAGE,
+                }
+                .as_bytes()
+                .to_vec()
+            } else {
+                // The shape of what CloudFront refuses with: a short error
+                // page rather than anything an extractor could mistake for an
+                // article.
+                b"<html><head><title>ERROR: The request could not be satisfied</title></head>\
+                  <body><h1>403 ERROR</h1><p>Request blocked.</p></body></html>"
+                    .to_vec()
+            };
+            Ok(crate::wire::net::Response {
+                status,
+                body,
+                etag: None,
+                last_modified: None,
+                content_type: Some("text/html; charset=utf-8".into()),
+                retry_after: None,
+                final_url: url.to_string(),
+            })
+        }
+
+        fn is_live(&self) -> bool {
+            false
+        }
+    }
+
+    /// One entry in a database, so that what an extraction cost in attempts
+    /// can be asked rather than argued.
+    fn one_entry(url: &str) -> (crate::wire::db::Db, crate::wire::feed::EntryId) {
+        use crate::wire::feed::{ParsedEntry, ParsedFeed};
+        let mut db = crate::wire::db::Db::open_in_memory().unwrap();
+        let feed =
+            crate::wire::db::feeds::add(&db, "https://e.org/f", None, FeedKind::Web, None, None)
+                .unwrap()
+                .id();
+        crate::wire::db::entries::upsert_parsed(
+            &mut db,
+            feed,
+            FeedKind::Web,
+            &ParsedFeed {
+                entries: vec![ParsedEntry {
+                    guid: "a".into(),
+                    url: Some(url.to_string()),
+                    ..ParsedEntry::default()
+                }],
+                ..ParsedFeed::default()
+            },
+        )
+        .unwrap();
+        let id = db
+            .conn
+            .query_row("SELECT id FROM entry", [], |r| r.get(0))
+            .unwrap();
+        (db, crate::wire::feed::EntryId(id))
+    }
+
+    /// The 403 that is a firewall rather than a wall.
+    ///
+    /// Measured against `iflscience.com` in September 2026: CloudFront answers
+    /// this program's honest user agent with a 403 and a 919-byte error page,
+    /// and a browser's with the whole article. The second request is made
+    /// inside the one attempt, so an entry behind such a firewall still has
+    /// all three of its attempts -- which is what `attempts` says here.
+    #[test]
+    fn a_403_from_an_edge_firewall_is_tried_once_more_as_a_browser() {
+        let url = "https://example.org/posts/borrow-checker";
+        let http = ByUserAgent::new(403, 200);
+        let got = run(&http, url, Limits::default()).unwrap();
+
+        assert_eq!(got.status, ArticleStatus::Extracted, "{:?}", got.error);
+        assert!(
+            got.markdown.as_deref().unwrap().contains("Three rules"),
+            "{:?}",
+            got.markdown
+        );
+        assert_eq!(
+            http.asked(),
+            vec![None, Some(BROWSER_USER_AGENT.to_string())],
+            "the honest agent first, and the browser only after the 403"
+        );
+
+        let (db, entry) = one_entry(url);
+        crate::wire::db::articles::put(&db, entry, &got).unwrap();
+        let attempts: i64 = db
+            .conn
+            .query_row(
+                "SELECT attempts FROM article WHERE entry_id = ?1",
+                [entry.0],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(attempts, 1, "two requests, one attempt");
+    }
+
+    /// And the wall that a browser is refused by too, which is what the audit
+    /// of NYT, WSJ, Reuters and Medium measured: the failure 0.0.2 recorded,
+    /// word for word, and no retry ever.
+    #[test]
+    fn a_403_that_refuses_a_browser_as_well_is_the_failure_it_always_was() {
+        let http = ByUserAgent::new(403, 403);
+        let got = run(
+            &http,
+            "https://www.nytimes.com/2026/09/21/a",
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(got.status, ArticleStatus::Failed);
+        assert_eq!(got.error.as_deref(), Some("nytimes.com answered 403"));
+        assert_eq!(got.retry_in_secs, None, "a wall is not a bad minute");
+        assert_eq!(http.asked().len(), 2, "one more request, and only one");
+    }
+
+    /// A 401 and a 402 mean what they say: there are credentials to have or
+    /// money to pay, and no user agent is the answer to either.
+    #[test]
+    fn a_wall_that_asks_for_credentials_is_never_asked_again_as_a_browser() {
+        for status in [401, 402] {
+            let http = ByUserAgent::new(status, 200);
+            let got = run(&http, "https://e.org/a", Limits::default()).unwrap();
+            assert_eq!(got.status, ArticleStatus::Failed, "{status}");
+            let want = format!("e.org answered {status}");
+            assert_eq!(got.error.as_deref(), Some(want.as_str()), "{status}");
+            assert_eq!(http.asked(), vec![None], "{status} was asked twice");
+        }
+    }
+
+    /// The next page of an article is asked for the way the first one had to
+    /// be: a firewall that refused the honest agent on page one refuses it on
+    /// page two.
+    #[test]
+    fn the_page_follower_keeps_the_user_agent_the_first_page_needed() {
+        let http = ByUserAgent::new(403, 200);
+        let got = run(
+            &http,
+            "https://www.phoronix.com/review/a-long-test/1",
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(got.status, ArticleStatus::Extracted, "{:?}", got.error);
+        let asked = http.asked();
+        assert!(asked.len() > 2, "no page was followed: {asked:?}");
+        assert!(
+            asked[1..].iter().all(|ua| ua.is_some()),
+            "a page was asked with the agent the site had already refused: {asked:?}"
+        );
+    }
+
     #[test]
     fn a_real_page_from_the_replay_directory_comes_out_as_markdown() {
         let http = Replay::open(&replay_dir()).unwrap();
@@ -720,6 +961,11 @@ mod tests {
         assert_eq!(host_of("not a url"), "the site");
     }
 
+    /// The classes that decide whether an entry rejoins the queue. A 403 is
+    /// not among them, and that is no longer the whole story: `run` asks it
+    /// again as a browser *inside* the attempt, so a 403 that reaches here is
+    /// one that refused both agents and there is nothing left to come back
+    /// for.
     #[test]
     fn a_429_and_a_timeout_come_back_and_a_403_does_not() {
         assert!(status_is_transient(429));
