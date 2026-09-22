@@ -15,6 +15,7 @@ expression: "render(&mut app, 100, 30)"
 ║         Behind a paywall                                                                         ║
 ║         20 Sep 2026                                                                              ║
 ║                                                                                                  ║
+║         extraction failed: paywall · e retries · o opens the page                                ║
 ║                                                                                                  ║
 ║                                                                                                  ║
 ║                                                                                                  ║
@@ -22,9 +23,8 @@ expression: "render(&mut app, 100, 30)"
 ║                                                                                                  ║
 ║                                                                                                  ║
 ║                                                                                                  ║
-║                                             paywall                                              ║
+║                                             no text                                              ║
 ║                                                                                                  ║
-║                                    o opens it in the browser                                     ║
 ║                                                                                                  ║
 ║                                                                                                  ║
 ║                                                                                                  ║

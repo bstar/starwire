@@ -27,10 +27,24 @@
 //!
 //! ## The head does not scroll
 //!
-//! The title and the byline are drawn above the body and stay there;
-//! `scroll` is a row of the *article*, not of the panel. An article whose
-//! title has scrolled away is an article you have to scroll back up to
+//! The title, the byline and the banner are drawn above the body and stay
+//! there; `scroll` is a row of the *article*, not of the panel. An article
+//! whose title has scrolled away is an article you have to scroll back up to
 //! identify, and the three rows it costs are cheaper than that.
+//!
+//! ## The banner, which is the whole of what a failure looks like now
+//!
+//! Since 0.0.2 an entry carries the text its feed gave from the moment it
+//! arrives, so a failed extraction has *text* -- the feed's summary -- and a
+//! reason. The reason goes in one line above the text rather than in place
+//! of it, because two sentences of summary is worth more than an empty panel
+//! with an explanation in the middle of it. A page that answered with a free
+//! sample and an invitation to subscribe is the same shape: the feed's own
+//! text, and `paywall` as the reason.
+//!
+//! The reason is drawn in exactly one place. An article with no text at all
+//! and a reason says `no text` in the body and leaves the explanation to the
+//! banner.
 
 use std::sync::Arc;
 
@@ -105,7 +119,7 @@ fn text_area(area: Rect, v: &View<'_>) -> Option<(Rect, Rect)> {
         return None;
     }
     let text = text_rect(body, v.reading_width);
-    let head_rows = u16::try_from(head(v, text.width).0.len()).unwrap_or(0);
+    let head_rows = u16::try_from(head(v, text.width).len()).unwrap_or(0);
     let y = text.y + head_rows;
     let rest = Rect {
         y,
@@ -180,31 +194,65 @@ pub fn picture_rects(area: Rect, v: &View<'_>) -> Vec<Visible> {
     out
 }
 
-/// The rows above the article: the title, the byline, and a blank. The
-/// caller's `scroll` counts from the first row *after* these, and both
-/// [`render`] and [`hit`] measure them the same way.
-fn head(v: &View<'_>, width: u16) -> (Vec<String>, usize) {
+/// What one row above the article is, which is how it is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ink {
+    Title,
+    Byline,
+    Banner,
+    Blank,
+}
+
+/// The rows above the article: the title, the byline, the banner where there
+/// is one, and a blank.
+///
+/// The caller's `scroll` counts from the first row *after* these, and
+/// [`render`], [`hit`] and [`picture_rects`] all measure them the same way --
+/// through this, rather than each counting for itself.
+fn head(v: &View<'_>, width: u16) -> Vec<(String, Ink)> {
     if !v.open || width == 0 {
-        return (Vec::new(), 0);
+        return Vec::new();
     }
-    let wrapped = |text: &str| -> Vec<String> {
+    let wrapped = |text: &str, ink: Ink| -> Vec<(String, Ink)> {
         starkit::wrap::wrap(text, width)
             .iter()
-            .map(|row| row.drawn(text).to_string())
+            .map(|row| (row.drawn(text).to_string(), ink))
             .collect()
     };
-    let mut out = wrapped(v.title);
+    let mut out = wrapped(v.title, Ink::Title);
     if out.is_empty() {
-        out.push(String::new());
+        out.push((String::new(), Ink::Title));
     }
-    // How many rows the title took, so `render` can draw exactly those in
-    // bold and the byline under them in its own colour.
-    let title_rows = out.len();
     if let Some(byline) = v.byline {
-        out.extend(wrapped(byline));
+        out.extend(wrapped(byline, Ink::Byline));
     }
-    out.push(String::new());
-    (out, title_rows)
+    if let Some(text) = banner(v) {
+        out.push((String::new(), Ink::Blank));
+        out.extend(wrapped(&text, Ink::Banner));
+    }
+    out.push((String::new(), Ink::Blank));
+    out
+}
+
+/// The one line above the text that says why there is no more of it.
+///
+/// Two shapes, because there are two ways an entry comes to be the feed's
+/// own words. An extraction that failed says so and offers the two keys that
+/// do something about it; a page that answered with a free sample says what
+/// it was, because "paywall" is not a failure of this program and `e` would
+/// only fetch the same stub again.
+pub fn banner(v: &View<'_>) -> Option<String> {
+    let reason = v.error?;
+    let reason = reason.trim();
+    if reason.is_empty() {
+        return None;
+    }
+    Some(match v.status {
+        ArticleStatus::Failed => {
+            format!("extraction failed: {reason} \u{b7} e retries \u{b7} o opens the page")
+        }
+        _ => format!("{reason} \u{b7} the feed's sample \u{b7} o opens the page"),
+    })
 }
 
 /// The badge on the top border: what state this article is in.
@@ -253,15 +301,14 @@ pub fn render(area: Rect, buf: &mut Buffer, v: &View<'_>, bars: &mut Bars) {
 
     let text = text_rect(body, v.reading_width);
     let mut y = text.y;
-    let (head_rows, title_rows) = head(v, text.width);
-    for (i, line) in head_rows.iter().enumerate() {
+    for (line, ink) in head(v, text.width) {
         if y >= body.y + body.height {
             return;
         }
-        let style = if i < title_rows {
-            Style::default().fg(rgb(t.fg)).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(rgb(t.wire.byline_fg))
+        let style = match ink {
+            Ink::Title => Style::default().fg(rgb(t.fg)).add_modifier(Modifier::BOLD),
+            Ink::Byline | Ink::Blank => Style::default().fg(rgb(t.wire.byline_fg)),
+            Ink::Banner => Style::default().fg(rgb(t.warn)),
         };
         buf.set_string(text.x, y, line, style);
         y += 1;
@@ -350,8 +397,11 @@ fn body_kind<'a>(v: &'a View<'a>) -> Body<'a> {
         // Nothing to draw, and a reason for it: an extraction still running
         // says so, a failed one says why.
         _ if v.status == ArticleStatus::Pending => Body::Pending,
-        _ if v.status == ArticleStatus::Failed => {
-            Body::Failed(v.error.unwrap_or("the page could not be read"))
+        // A failure with a reason has it in the banner already, and saying
+        // it twice in one panel reads as two different things having gone
+        // wrong. One with no reason recorded still needs one.
+        _ if v.status == ArticleStatus::Failed && banner(v).is_none() => {
+            Body::Failed("the page could not be read")
         }
         _ => Body::Nothing,
     }
@@ -540,7 +590,7 @@ mod tests {
                 };
                 let mut buf = Buffer::empty(area);
                 render(area, &mut buf, &v, &mut Bars::new());
-                let head_rows = u16::try_from(head(&v, text.width).0.len()).unwrap();
+                let head_rows = u16::try_from(head(&v, text.width).len()).unwrap();
                 for span in &r.links {
                     let Some(y) = (usize::from(span.row))
                         .checked_sub(scroll)
@@ -715,20 +765,144 @@ mod tests {
         assert!(text.contains("extracting\u{2026}"), "{text}");
     }
 
+    /// A failure says why, once, in the banner -- and what to press about
+    /// it. With nothing to read under it the body says only that.
     #[test]
-    fn a_failed_article_says_why_and_offers_the_browser() {
+    fn a_failed_article_says_why_in_the_banner() {
         let t = theme("terminal");
         let area = Rect::new(0, 0, 100, 20);
         let v = View {
             status: ArticleStatus::Failed,
-            error: Some("paywall"),
+            error: Some("403"),
             ..view(&t, None)
         };
         let mut buf = Buffer::empty(area);
         render(area, &mut buf, &v, &mut Bars::new());
         let text = dump(&buf, area);
-        assert!(text.contains("paywall"), "{text}");
+        assert!(
+            text.contains("extraction failed: 403 \u{b7} e retries \u{b7} o opens the page"),
+            "{text}"
+        );
+        assert!(text.contains("no text"), "{text}");
+        assert_eq!(
+            text.matches("403").count(),
+            1,
+            "the reason is drawn in one place: {text}"
+        );
+
+        // A failure with nothing recorded against it still says something.
+        let v = View {
+            status: ArticleStatus::Failed,
+            error: None,
+            ..view(&t, None)
+        };
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &v, &mut Bars::new());
+        let text = dump(&buf, area);
+        assert!(text.contains("the page could not be read"), "{text}");
         assert!(text.contains("o opens it in the browser"), "{text}");
+    }
+
+    /// The banner sits above the text the feed carried rather than in place
+    /// of it, which is the whole of what 0.0.2 changed about a failure: two
+    /// sentences of summary is worth more than an empty panel.
+    #[test]
+    fn the_banner_sits_above_the_text_the_feed_carried() {
+        let t = theme("terminal");
+        let area = Rect::new(0, 0, 100, 24);
+        let body = frame::body(area, &words(ModuleId::Reader));
+        let width = text_cols(body.width, 80);
+        let doc = parse::parse("The first two sentences, as the feed carried them.");
+        let r = Arc::new(layout::layout(
+            &doc,
+            &layout::LayoutCtx {
+                theme: &t,
+                width,
+                pictures: None,
+            },
+        ));
+
+        for (status, expected) in [
+            (
+                ArticleStatus::Failed,
+                "extraction failed: 429 \u{b7} e retries \u{b7} o opens the page",
+            ),
+            (
+                ArticleStatus::FeedContent,
+                "429 \u{b7} the feed's sample \u{b7} o opens the page",
+            ),
+        ] {
+            let v = View {
+                status,
+                error: Some("429"),
+                ..view(&t, Some(Arc::clone(&r)))
+            };
+            let mut buf = Buffer::empty(area);
+            render(area, &mut buf, &v, &mut Bars::new());
+            let text = dump(&buf, area);
+            assert!(text.contains(expected), "{status:?}: {text}");
+            assert!(
+                text.contains("The first two sentences"),
+                "{status:?}: the feed's own text is still drawn: {text}"
+            );
+            let banner_at = text.find(expected).expect("the banner");
+            let body_at = text.find("The first two").expect("the text");
+            assert!(banner_at < body_at, "{status:?}: the banner is above it");
+        }
+
+        // A paywall is the shape the user will meet it in.
+        let v = View {
+            status: ArticleStatus::FeedContent,
+            error: Some("paywall"),
+            ..view(&t, Some(r))
+        };
+        assert_eq!(
+            banner(&v).as_deref(),
+            Some("paywall \u{b7} the feed's sample \u{b7} o opens the page")
+        );
+
+        // And an article that did yield has no banner at all.
+        let v = View {
+            status: ArticleStatus::Extracted,
+            error: None,
+            ..view(&t, None)
+        };
+        assert_eq!(banner(&v), None);
+    }
+
+    /// Everything the panel measures is measured through `head`, so the
+    /// banner moves the text, the links and the pictures together.
+    #[test]
+    fn the_banner_moves_the_rows_under_it() {
+        let t = theme("terminal");
+        let area = Rect::new(0, 0, 100, 30);
+        let body = frame::body(area, &words(ModuleId::Reader));
+        let text = text_rect(body, 80);
+        let r = with_a_picture(&t, text.width);
+
+        let clean = View {
+            error: None,
+            ..view(&t, Some(Arc::clone(&r)))
+        };
+        let warned = View {
+            status: ArticleStatus::FeedContent,
+            error: Some("paywall"),
+            ..view(&t, Some(r))
+        };
+        let before = picture_rects(area, &clean)[0].rect;
+        let after = picture_rects(area, &warned)[0].rect;
+        assert!(
+            after.y > before.y,
+            "the banner pushed the picture down: {before:?} {after:?}"
+        );
+        assert_eq!(after.x, before.x);
+
+        // And a click still lands on it where it is now drawn.
+        assert_eq!(
+            hit(area, &warned, after.x, after.y),
+            Some(Hit::Picture(0)),
+            "the banner and the hit test agree"
+        );
     }
 
     #[test]
