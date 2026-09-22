@@ -81,6 +81,13 @@ pub enum DbJob {
         scope: RefreshScope,
         generation: u64,
     },
+    /// Offer every failed or unextracted entry in `scope` again, at once.
+    /// What a refresh somebody asked for adds to re-fetching the feed; the
+    /// clock's own refresh never sends one.
+    ReofferExtracts {
+        scope: RefreshScope,
+        generation: u64,
+    },
     /// Stamp `meta.last_refresh` and sweep the fetch log.
     RecordRefresh,
     Store {
@@ -238,6 +245,13 @@ pub enum Done {
     Due {
         scope: RefreshScope,
         feeds: Vec<feeds::DueFeed>,
+        generation: u64,
+    },
+    /// How many entries a re-offer marked, so the refresh can start the
+    /// queue and say what it is about to try.
+    Reoffered {
+        scope: RefreshScope,
+        count: i64,
         generation: u64,
     },
     RefreshStamped(Timestamp),
@@ -423,6 +437,24 @@ pub fn perform_db(job: DbJob, db: &mut Db) -> Vec<Done> {
                     generation,
                 }],
                 Err(e) => failed("refresh", e),
+            }
+        }
+        DbJob::ReofferExtracts { scope, generation } => {
+            // The window's scope, translated here rather than carried into
+            // the database: nothing under `db/` knows what a `RefreshScope`
+            // is, the same way nothing there knows what a key press is.
+            let which = match scope {
+                RefreshScope::All => articles::Scope::Everything,
+                RefreshScope::Feed(id) => articles::Scope::Feed(id),
+                RefreshScope::Folder(id) => articles::Scope::Folder(id),
+            };
+            match articles::reoffer(db, which) {
+                Ok(count) => vec![Done::Reoffered {
+                    scope,
+                    count,
+                    generation,
+                }],
+                Err(e) => failed("extract", e),
             }
         }
         DbJob::RecordRefresh => {

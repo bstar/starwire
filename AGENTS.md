@@ -149,14 +149,15 @@ whole of deduplication rests on it.
 
 There is no `robots.txt` request, and that is a decision rather than an
 oversight: this fetches pages a person subscribed to and asked to read, one
-per entry, at most three times ever. The politeness is structural instead —
-`wire::net::Politeness` holds a host serially for the length of a request and
-sleeps the configured gap between them, there is a timeout (fifteen seconds
-for a feed, thirty for a page) and a two-megabyte cap, the `Accept` header
-says HTML, and the user agent names the program and links the repository so an
-unhappy administrator knows who to ask. `Politeness` also keeps a small table
-of hosts that have said they want a longer gap, and a host held by its own
-`x-ratelimit-reset` waits that out.
+per entry, at most three times unless somebody asks for another with `e` or
+`r`. The politeness is structural instead — `wire::net::Politeness` holds a
+host serially for the length of a request and sleeps the configured gap
+between them, there is a timeout (fifteen seconds for a feed, thirty for a
+page) and a two-megabyte cap, the `Accept` header says HTML, and the user
+agent names the program and links the repository so an unhappy administrator
+knows who to ask. `Politeness` also keeps a small table of hosts that have
+said they want a longer gap, and a host held by its own `x-ratelimit-reset`
+waits that out.
 
 Three kinds of entry are never fetched, and `wire::extract::policy` is where
 that is decided: a video (the description is the text, and `mpv` is the

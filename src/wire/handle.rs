@@ -404,7 +404,18 @@ impl Handle {
             // Not while an import is being offered: the list is about to
             // change, and fetching the four feeds somebody already had is
             // work the answer would throw away.
-            handle.send(Command::Refresh(RefreshScope::All));
+            //
+            // The job rather than `Command::Refresh`, which is the same
+            // question without the second half: a refresh somebody pressed
+            // a key for offers the failed extractions in its scope again,
+            // and one that happens because the program started must not --
+            // the attempt ceiling would then last exactly one session, and
+            // a page that cannot be read would cost a request every launch.
+            // Generation zero because nothing has been cancelled yet.
+            handle.senders.dispatch(Job::Db(DbJob::Due {
+                scope: RefreshScope::All,
+                generation: 0,
+            }));
         }
         Ok(handle)
     }

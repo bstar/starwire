@@ -122,8 +122,18 @@ its headers, and a 403 that refuses that too is the wall it looks like and is
 left alone. The honest agent goes first every time, and a site that does not
 refuse it never sees the other one.
 
-Either way an entry costs at most three attempts ever, and `e` in the reader
-forces another.
+Either way an entry costs at most three attempts of its own, and `e` in the
+reader forces another.
+
+**A refresh you asked for is a second chance for the articles as well.** `r`
+on a source, or `R`, tries every failed article in it again at once, backoff
+or not; a paywall sample is left alone. The three attempts and the delay
+between them are what stops a hopeless page costing a request on a timer, and
+a key you pressed is not a timer — the reasons a page failed yesterday are
+exactly the ones that change. The refresh says how many it is trying in the
+status line, and the entries list shows them arriving. Only a refresh you
+asked for: the one on the clock, and the one when STAR/WIRE starts, fetch
+the feeds and leave the ceiling where it is.
 
 `starwire extract <url>` runs the whole thing on one page and prints the
 result, without a feed and without writing anything. It is the fastest way to
@@ -134,7 +144,8 @@ the reason when the page gives nothing.
 
 There is no `robots.txt` request, and that is deliberate rather than an
 oversight: this fetches pages you subscribed to and asked to read, one per
-entry, at most three times ever. The politeness is in the construction:
+entry, at most three times unless you ask for another. The politeness is in
+the construction:
 
 - One request at a time per host, with `[fetch] min_host_interval_secs`
   between them — **including every hop of a redirect.** A wrapper URL that

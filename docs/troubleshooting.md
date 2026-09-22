@@ -104,8 +104,9 @@ feed carried and is stored as the feed's rather than as an article.
 
 A `429`, a `5xx` or a timeout comes round again by itself, after
 `[fetch] refresh_minutes` and doubling from there. The rest stay as they are.
-Either way an entry is tried at most three times ever, and `e` in the reader
-forces another attempt now.
+Either way an entry is tried at most three times of its own accord. `e` in
+the reader forces another attempt now, and `r` on the source does the same
+for every failed article in it at once.
 
 Upgrading to 0.0.2 marks the ones already in your database due as well —
 0.0.1 had no way to tell a bad minute from a paywall and recorded every

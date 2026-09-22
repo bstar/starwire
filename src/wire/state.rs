@@ -511,6 +511,11 @@ fn apply_done(state: &mut State, done: Done) -> Effects {
             feeds,
             generation,
         } => done_due(state, scope, feeds, generation),
+        Done::Reoffered {
+            scope,
+            count,
+            generation,
+        } => done_reoffered(state, scope, count, generation),
         Done::Fetched {
             feed,
             kind,
@@ -813,10 +818,67 @@ fn cmd_refresh(state: &mut State, scope: RefreshScope) -> Effects {
     // Which feeds are due is the database's answer, not this module's: the
     // conditional headers and the backoff live in the row and never in
     // `State`.
-    Effects::job(Job::Db(DbJob::Due {
+    let mut effects = Effects::job(Job::Db(DbJob::Due {
         scope,
         generation: state.refresh_generation,
-    }))
+    }));
+    // A refresh is a refresh of the articles as well as of the list. The
+    // attempt ceiling and the retry delay are both answers to "nobody
+    // asked" -- and this is the one path somebody did: `r` on a source, `r`
+    // on the open list, `R` for everything. A refresh nobody asked for --
+    // the clock's, and the one at startup -- queues `DbJob::Due` directly
+    // and reaches none of this, which is what keeps the ceiling meaning
+    // something.
+    if state.settings.extract {
+        effects.push_job(Job::Db(DbJob::ReofferExtracts {
+            scope,
+            generation: state.refresh_generation,
+        }));
+    }
+    effects
+}
+
+fn done_reoffered(state: &mut State, scope: RefreshScope, count: i64, generation: u64) -> Effects {
+    if generation != state.refresh_generation {
+        return Effects::none();
+    }
+    let mut effects = Effects::none();
+    if count > 0 {
+        // The queue is topped up from the database rather than from this
+        // number: `pending` is what orders the rows, and a re-offer of two
+        // hundred articles must not become two hundred jobs at once.
+        effects.push_job(Job::Db(DbJob::PendingExtracts {
+            limit: state.settings.parallel.saturating_mul(2).max(1),
+        }));
+    }
+    effects.push_event(Event::Note(Note::info(refreshing_note(
+        state, &scope, count,
+    ))));
+    effects
+}
+
+/// What the status line says a refresh somebody asked for is doing: what it
+/// covers, and how many articles it is about to try again.
+fn refreshing_note(state: &State, scope: &RefreshScope, count: i64) -> String {
+    let what = match scope {
+        RefreshScope::All => {
+            let feeds = state.feeds.len();
+            format!("{feeds} feed{}", if feeds == 1 { "" } else { "s" })
+        }
+        RefreshScope::Feed(id) => match state.feed(*id) {
+            Some(row) => row.display_title().to_string(),
+            None => id.to_string(),
+        },
+        RefreshScope::Folder(id) => match state.folders.iter().find(|f| f.id == *id) {
+            Some(folder) => folder.name.clone(),
+            None => id.to_string(),
+        },
+    };
+    match count {
+        0 => format!("refreshing {what}"),
+        1 => format!("refreshing {what} · 1 article to try again"),
+        n => format!("refreshing {what} · {n} articles to try again"),
+    }
 }
 
 fn done_due(
@@ -1747,16 +1809,169 @@ mod tests {
     }
 
     #[test]
-    fn a_refresh_asks_the_database_which_feeds_are_due() {
+    fn a_refresh_asks_the_database_which_feeds_are_due_and_reoffers_its_articles() {
         let mut s = state();
         let effects = apply(&mut s, Change::Command(Command::Refresh(RefreshScope::All)));
+        assert!(
+            matches!(
+                db_jobs(&effects).as_slice(),
+                [
+                    DbJob::Due {
+                        scope: RefreshScope::All,
+                        ..
+                    },
+                    DbJob::ReofferExtracts {
+                        scope: RefreshScope::All,
+                        ..
+                    }
+                ]
+            ),
+            "{:?}",
+            db_jobs(&effects)
+        );
+
+        // With extraction off there is nothing to re-offer: the list is
+        // still refreshed and no article is ever fetched.
+        s.settings.extract = false;
+        let effects = apply(&mut s, Change::Command(Command::Refresh(RefreshScope::All)));
+        assert!(matches!(db_jobs(&effects).as_slice(), [DbJob::Due { .. }]));
+    }
+
+    /// The note the refresh puts in the status line: what it covers, and
+    /// how many articles it is trying again -- and nothing after the name
+    /// when there are none.
+    #[test]
+    fn the_refresh_note_names_the_scope_and_counts_the_articles() {
+        let mut s = state();
+        let note = |s: &mut State, scope, count| {
+            let effects = apply(
+                s,
+                Change::Done(Done::Reoffered {
+                    scope,
+                    count,
+                    generation: 0,
+                }),
+            );
+            effects
+                .events
+                .iter()
+                .find_map(|e| match e {
+                    Event::Note(n) => Some(n.text.clone()),
+                    _ => None,
+                })
+                .expect("a note")
+        };
+        assert_eq!(
+            note(&mut s, RefreshScope::All, 27),
+            "refreshing 2 feeds · 27 articles to try again"
+        );
+        assert_eq!(
+            note(&mut s, RefreshScope::Feed(FeedId(1)), 1),
+            "refreshing Example · 1 article to try again"
+        );
+        assert_eq!(
+            note(&mut s, RefreshScope::Folder(FolderId(1)), 0),
+            "refreshing Tech"
+        );
+    }
+
+    #[test]
+    fn a_reoffer_that_found_something_starts_the_queue() {
+        let mut s = state();
+        let effects = apply(
+            &mut s,
+            Change::Done(Done::Reoffered {
+                scope: RefreshScope::All,
+                count: 3,
+                generation: 0,
+            }),
+        );
         assert!(matches!(
             db_jobs(&effects).as_slice(),
-            [DbJob::Due {
-                scope: RefreshScope::All,
-                ..
-            }]
+            [DbJob::PendingExtracts { .. }]
         ));
+
+        let effects = apply(
+            &mut s,
+            Change::Done(Done::Reoffered {
+                scope: RefreshScope::All,
+                count: 0,
+                generation: 0,
+            }),
+        );
+        assert!(db_jobs(&effects).is_empty(), "nothing to work through");
+
+        // And a re-offer from before a cancel does not start it again.
+        apply(&mut s, Change::Command(Command::CancelRefresh));
+        let effects = apply(
+            &mut s,
+            Change::Done(Done::Reoffered {
+                scope: RefreshScope::All,
+                count: 3,
+                generation: 0,
+            }),
+        );
+        assert!(effects.jobs.is_empty() && effects.events.is_empty());
+    }
+
+    /// End to end over the fixture, with the real database, the real queue
+    /// and the real extractor: an article that has spent every one of its
+    /// attempts is tried again because somebody asked for its feed, and the
+    /// attempt is recorded.
+    #[test]
+    fn refresh_queues_a_reoffer_then_pending_extracts() {
+        let cfg = WireConfig::default();
+        let (handle, mut driver) = crate::wire::testing::driver(&cfg);
+        driver.pump();
+
+        let feed = crate::wire::db::feeds::list_feeds_with_unread(&driver.db).unwrap()[0].id;
+        let entry =
+            super::super::db::entries::page(&driver.db, &Selection::Feed(feed), false, 0, 1)
+                .unwrap()
+                .rows[0]
+                .id;
+        driver
+            .db
+            .conn
+            .execute(
+                "UPDATE article SET status = 3, attempts = 3, retry_after = NULL,
+                                    error = 'the site answered 403'
+                 WHERE entry_id = ?1",
+                [entry.0],
+            )
+            .unwrap();
+        assert!(
+            !super::super::db::articles::pending(&driver.db, 50)
+                .unwrap()
+                .iter()
+                .any(|(e, _)| *e == entry),
+            "the ceiling holds until somebody asks"
+        );
+
+        handle.send(Command::Refresh(RefreshScope::Feed(feed)));
+        driver.pump();
+
+        let attempts: i64 = driver
+            .db
+            .conn
+            .query_row(
+                "SELECT attempts FROM article WHERE entry_id = ?1",
+                [entry.0],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(attempts, 4, "the page was pulled again");
+        let notes: Vec<String> = handle
+            .drain()
+            .filter_map(|e| match e {
+                Event::Note(n) => Some(n.text),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            notes.iter().any(|n| n.contains("to try again")),
+            "{notes:?}"
+        );
     }
 
     #[test]
