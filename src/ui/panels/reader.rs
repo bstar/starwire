@@ -14,6 +14,17 @@
 //! sixty column terminal reading an article at a hundred and sixty columns
 //! is a terminal nobody reads an article in.
 //!
+//! ## Pictures are placed here and drawn elsewhere
+//!
+//! [`picture_rects`] turns the slots `markdown::layout` recorded into the
+//! rectangles they occupy on this frame, cropped to the part of the body
+//! that is on screen. It does not draw them: a graphics protocol has to go
+//! down after the text and before the overlays, which is a pass over the
+//! whole frame rather than a panel's business -- see `ui/pictures.rs` and
+//! `App::draw`. What it does do is share [`head`] and [`text_rect`] with
+//! [`render`] and [`hit`], so the three cannot disagree about where a row
+//! is.
+//!
 //! ## The head does not scroll
 //!
 //! The title and the byline are drawn above the body and stay there;
@@ -82,6 +93,91 @@ pub fn text_rect(body: Rect, reading_width: u16) -> Rect {
         width,
         ..body
     }
+}
+
+/// The body, and the part of it the article's own rows are drawn in.
+///
+/// The one piece of arithmetic [`render`], [`hit`] and [`picture_rects`]
+/// all depend on. `None` when there is nothing open or no room to draw it.
+fn text_area(area: Rect, v: &View<'_>) -> Option<(Rect, Rect)> {
+    let body = frame::body(area, &words(ModuleId::Reader));
+    if body.height == 0 || body.width == 0 || !v.open {
+        return None;
+    }
+    let text = text_rect(body, v.reading_width);
+    let head_rows = u16::try_from(head(v, text.width).0.len()).unwrap_or(0);
+    let y = text.y + head_rows;
+    let rest = Rect {
+        y,
+        height: (body.y + body.height).saturating_sub(y),
+        ..text
+    };
+    Some((body, rest))
+}
+
+/// Where one of this article's pictures is on the screen right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Visible {
+    /// Which of the article's pictures this is.
+    pub index: usize,
+    /// The cells it covers, already cut to the part of the body on screen.
+    pub rect: Rect,
+    /// How many of the picture's own rows the scroll took off the top. The
+    /// pixels for those rows are cropped away before anything is encoded: a
+    /// rectangle cannot start above the panel, so the top has to be cut out
+    /// of the picture rather than out of the rectangle.
+    pub cut_top: u16,
+    /// Whether anything was cut at all, top, bottom or side. A clipped
+    /// placement is drawn as half blocks in every protocol but kitty's.
+    pub clipped: bool,
+}
+
+/// Every picture of this article that is on screen, in document order.
+pub fn picture_rects(area: Rect, v: &View<'_>) -> Vec<Visible> {
+    let Some((_, rest)) = text_area(area, v) else {
+        return Vec::new();
+    };
+    let Some(rendered) = v.rendered.as_deref() else {
+        return Vec::new();
+    };
+    if rest.height == 0 || rest.width == 0 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (index, slot) in rendered.pictures.iter().enumerate() {
+        let top = usize::from(slot.row);
+        let bottom = top + usize::from(slot.rows);
+        if bottom <= v.scroll {
+            continue;
+        }
+        let cut_top = u16::try_from(v.scroll.saturating_sub(top)).unwrap_or(u16::MAX);
+        let rows = slot.rows.saturating_sub(cut_top);
+        let Ok(above) = u16::try_from(top.saturating_sub(v.scroll)) else {
+            continue;
+        };
+        if rows == 0 || above >= rest.height {
+            continue;
+        }
+        let y = rest.y + above;
+        let height = rows.min(rest.y + rest.height - y);
+        let x = rest.x + slot.col.min(rest.width);
+        let width = slot.cols.min((rest.x + rest.width).saturating_sub(x));
+        if height == 0 || width == 0 {
+            continue;
+        }
+        out.push(Visible {
+            index,
+            rect: Rect {
+                x,
+                y,
+                width,
+                height,
+            },
+            cut_top,
+            clipped: cut_top > 0 || height < rows || width < slot.cols,
+        });
+    }
+    out
 }
 
 /// The rows above the article: the title, the byline, and a blank. The
@@ -305,6 +401,10 @@ fn cut(text: &str, width: u16) -> String {
     out
 }
 
+fn inside(r: Rect, x: u16, y: u16) -> bool {
+    x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height
+}
+
 fn centred(area: Rect, buf: &mut Buffer, text: &str, style: Style) {
     if area.height == 0 || area.width == 0 {
         return;
@@ -319,6 +419,8 @@ fn centred(area: Rect, buf: &mut Buffer, text: &str, style: Style) {
 pub enum Hit {
     /// Link *n*, as the article numbers it.
     Link(u16),
+    /// The picture at this index in the article's own order.
+    Picture(usize),
     Scrollbar,
 }
 
@@ -329,26 +431,30 @@ pub enum Hit {
 /// [`head`] rather than from a constant.
 pub fn hit(area: Rect, v: &View<'_>, x: u16, y: u16) -> Option<Hit> {
     let body = frame::body(area, &words(ModuleId::Reader));
-    if body.height == 0 || !v.open {
-        return None;
-    }
-    let text = text_rect(body, v.reading_width);
-    let head_rows = u16::try_from(head(v, text.width).0.len()).unwrap_or(0);
-    let first = text.y + head_rows;
-    if y < first || y >= body.y + body.height {
+    let (_, rest) = text_area(area, v)?;
+    if y < rest.y || y >= body.y + body.height {
         return None;
     }
     if x >= body.x + body.width {
         return Some(Hit::Scrollbar);
     }
+    // Pictures first. A picture's rows are blank, so nothing else is under
+    // one -- but a link whose row a picture covers would otherwise answer
+    // for a click nowhere near it.
+    if let Some(place) = picture_rects(area, v)
+        .into_iter()
+        .find(|place| inside(place.rect, x, y))
+    {
+        return Some(Hit::Picture(place.index));
+    }
     let rendered = v.rendered.as_deref()?;
-    let row = usize::from(y - first) + v.scroll;
+    let row = usize::from(y - rest.y) + v.scroll;
     let row = u16::try_from(row).ok()?;
     rendered
         .links
         .iter()
         .find(|span| {
-            span.row == row && x >= text.x + span.col && x < text.x + span.col + span.width
+            span.row == row && x >= rest.x + span.col && x < rest.x + span.col + span.width
         })
         .map(|span| Hit::Link(span.number))
 }
@@ -454,6 +560,145 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// An article with one picture in it, six rows tall, laid out at the
+    /// width the reader will draw at.
+    fn with_a_picture(t: &Theme, width: u16) -> Arc<Rendered> {
+        use crate::ui::markdown::layout::{PictureKnown, PictureSizes};
+        let mut known = std::collections::HashMap::new();
+        // 160 by 96 pixels at a cell of eight by sixteen: twenty columns
+        // and six rows.
+        known.insert(
+            "https://e.org/hero.png".to_string(),
+            PictureKnown::Natural(160, 96),
+        );
+        let sizes = PictureSizes {
+            cap_rows: 9,
+            cell: (8, 16),
+            known: &known,
+        };
+        let doc = parse::parse(concat!(
+            "Some words before it.\n\n",
+            "![a diagram](https://e.org/hero.png)\n\n",
+            "And some words after it.\n",
+        ));
+        Arc::new(layout::layout(
+            &doc,
+            &layout::LayoutCtx {
+                theme: t,
+                width,
+                pictures: Some(&sizes),
+            },
+        ))
+    }
+
+    /// The rectangle a picture is drawn in is the one a click on it is
+    /// answered from, at every scroll position -- and the cells under it
+    /// are the blank ones the layout reserved.
+    #[test]
+    fn picture_rects_agree_with_render_and_a_click_finds_them() {
+        let t = theme("terminal");
+        let area = Rect::new(0, 0, 100, 30);
+        let body = frame::body(area, &words(ModuleId::Reader));
+        let text = text_rect(body, 80);
+        let r = with_a_picture(&t, text.width);
+        assert_eq!(r.pictures.len(), 1, "{:?}", r.plain);
+        assert_eq!((r.pictures[0].cols, r.pictures[0].rows), (20, 6));
+
+        for scroll in [0usize, 4, 9] {
+            let v = View {
+                scroll,
+                ..view(&t, Some(Arc::clone(&r)))
+            };
+            let mut buf = Buffer::empty(area);
+            render(area, &mut buf, &v, &mut Bars::new());
+
+            let places = picture_rects(area, &v);
+            let Some(place) = places.first().copied() else {
+                continue;
+            };
+            assert_eq!(place.index, 0);
+            assert!(place.rect.height <= 6 && place.rect.width <= 20);
+            assert!(
+                place.rect.y >= body.y && place.rect.y + place.rect.height <= body.y + body.height,
+                "scroll {scroll}: {:?} is outside {body:?}",
+                place.rect
+            );
+
+            // Every cell it covers is one the text left blank, which is
+            // what the reserved rows are for.
+            for y in place.rect.y..place.rect.y + place.rect.height {
+                for x in place.rect.x..place.rect.x + place.rect.width {
+                    assert_eq!(
+                        buf[(x, y)].symbol().trim(),
+                        "",
+                        "scroll {scroll}: something was drawn at {x},{y}"
+                    );
+                }
+            }
+
+            // And a click anywhere on it answers for it rather than for a
+            // link on a row it covers.
+            for (x, y) in [
+                (place.rect.x, place.rect.y),
+                (
+                    place.rect.x + place.rect.width - 1,
+                    place.rect.y + place.rect.height - 1,
+                ),
+            ] {
+                assert_eq!(
+                    hit(area, &v, x, y),
+                    Some(Hit::Picture(0)),
+                    "scroll {scroll} at {x},{y}"
+                );
+            }
+        }
+    }
+
+    /// Scrolled half off the top, the rectangle starts at the first drawn
+    /// row and the rows taken away are counted -- they are cut out of the
+    /// picture rather than out of the rectangle, because a rectangle cannot
+    /// start above the panel.
+    #[test]
+    fn a_picture_scrolled_off_the_top_is_cut_rather_than_moved() {
+        let t = theme("terminal");
+        let area = Rect::new(0, 0, 100, 30);
+        let body = frame::body(area, &words(ModuleId::Reader));
+        let text = text_rect(body, 80);
+        let r = with_a_picture(&t, text.width);
+        let slot = r.pictures[0].clone();
+
+        let v = View {
+            scroll: usize::from(slot.row) + 2,
+            ..view(&t, Some(Arc::clone(&r)))
+        };
+        let (_, rest) = text_area(area, &v).expect("an open article");
+        let place = picture_rects(area, &v)[0];
+        assert_eq!(place.cut_top, 2, "two of its six rows are above the view");
+        assert_eq!(place.rect.height, 4);
+        assert_eq!(place.rect.y, rest.y, "at the first drawn row");
+        assert!(place.clipped);
+
+        // All six above it: nothing to draw at all.
+        let v = View {
+            scroll: usize::from(slot.row) + usize::from(slot.rows),
+            ..view(&t, Some(r))
+        };
+        assert!(picture_rects(area, &v).is_empty());
+    }
+
+    /// With nothing open, or nothing laid out, there is nothing to place.
+    #[test]
+    fn there_are_no_pictures_to_place_when_there_is_no_article() {
+        let t = theme("terminal");
+        let area = Rect::new(0, 0, 100, 30);
+        let closed = View {
+            open: false,
+            ..view(&t, None)
+        };
+        assert!(picture_rects(area, &closed).is_empty());
+        assert!(picture_rects(area, &view(&t, None)).is_empty());
     }
 
     #[test]
