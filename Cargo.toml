@@ -16,8 +16,10 @@ categories = ["command-line-utilities"]
 # key table and its help view, the image pipeline, and the HTTP agent's
 # defaults, all of it already proven in STAR/AMP, STAR/CORD and STAR/FOLD.
 # `net` is on here where STAR/FOLD leaves it off -- a news reader is the first
-# member of the family whose whole job is fetching -- and `gif` and `wsz` stay
-# out: `gif` is what a chat client animates and `wsz` is a Winamp skin format.
+# member of the family whose whole job is fetching -- and `webp` with it, since
+# a news site that was serving JPEG two years ago is serving WebP today and an
+# article's pictures are the point of 0.0.2. `gif` and `wsz` stay out: `gif` is
+# what a chat client animates and `wsz` is a Winamp skin format.
 #
 # It is also the one copy of `ratatui`, `crossterm`, `ratatui-image` and
 # `image` in the tree. Everything under `src/ui/` reaches them through
@@ -32,8 +34,9 @@ categories = ["command-line-utilities"]
 # The `version` is not redundant with the revision: cargo-deny counts a
 # dependency with no version requirement as a wildcard and `wildcards = "deny"`
 # refuses it, whether or not the source is a git URL pinned to a revision.
-starkit = { git = "https://github.com/bstar/starkit", rev = "857e3f1a5b8c8883c59762bc2c381991c624892c", version = "0.3", default-features = false, features = [
+starkit = { git = "https://github.com/bstar/starkit", rev = "ff7ae1a1a220daaad893ce29b90be874cc8c72ac", version = "0.3", default-features = false, features = [
     "image",
+    "webp",
     "net",
 ] }
 
@@ -162,6 +165,13 @@ serde_json = "1"
 arboard = { version = "3.6", default-features = false, features = [
     "wayland-data-control",
 ] }
+
+# Naming a cached picture on disk. A file name built out of a URL somebody
+# else published is a file name that can hold a `/`, a `..` or four kilobytes
+# of query string, and exactly one of those has to be wrong for the cache to
+# write outside its own directory; a hash of it cannot. Already in the graph
+# under `rusqlite`'s build, so this adds nothing to the tree.
+sha2 = "0.10"
 
 # The channels between the window, the db thread and the net pool. The UI loop
 # is synchronous and drains events once per frame; there is no async runtime in
