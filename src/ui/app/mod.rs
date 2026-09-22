@@ -1958,6 +1958,38 @@ mod tests {
         assert_eq!(app.view.entry_rows.len(), 3, "the fixture's HN entries");
     }
 
+    /// `r` refreshes the source from either list, and the note says both
+    /// what it covers and how many of its articles are being tried again --
+    /// the paywalled fixture entry being the one.
+    #[test]
+    fn r_refreshes_the_source_from_either_list_and_says_what_it_is_trying() {
+        let (mut app, mut fk, _dir) = app();
+        goto_source(&mut app, &mut fk, "Tech");
+        app.key(key('l'));
+        settle(&mut app, &mut fk);
+        goto_source(&mut app, &mut fk, "Hacker News");
+
+        app.key(key('r'));
+        settle(&mut app, &mut fk);
+        assert_eq!(
+            app.note_text(),
+            Some("refreshing Hacker News · 1 article to try again")
+        );
+
+        // And the same key with the keyboard in the list of entries, where
+        // the source is the one the list is showing. The name is longer the
+        // second time because the refresh above took the feed's own title.
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        assert_eq!(app.layout.focus(), ModuleId::Entries);
+        app.key(key('r'));
+        settle(&mut app, &mut fk);
+        assert_eq!(
+            app.note_text(),
+            Some("refreshing Hacker News: Front Page · 1 article to try again")
+        );
+    }
+
     /// `enter` on a folder reads the whole folder; `l` opens its feeds. Two
     /// keys, two answers, and `docs/the-stack.md` says which is which.
     #[test]

@@ -82,6 +82,7 @@ _in the entries_
 | `p`            | previous unread |
 | `u`            | unread only |
 | `A`            | mark all read |
+| `r`            | refresh this source |
 
 ## reader
 

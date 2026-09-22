@@ -388,6 +388,15 @@ pub const BINDINGS: &[Binding] = &[
         label: "mark all read",
         group: "entries",
     },
+    // The same key as in the sources, and the same action: the source a
+    // list is showing is the source its `r` refreshes, so the answer to "is
+    // this feed stuck?" does not depend on which panel has the keyboard.
+    Binding {
+        action: Action::RefreshSource,
+        keys: "r",
+        label: "refresh this source",
+        group: "entries",
+    },
     // -- reader --------------------------------------------------------------
     Binding {
         action: Action::PageDown,
@@ -1315,6 +1324,27 @@ mod tests {
             Some(Action::MarkAllRead)
         );
         assert_eq!(resolve(plain('A')), None, "`A` is nobody's global key");
+    }
+
+    /// `r` refreshes the source under the cursor in the sources and the
+    /// source the list is showing in the entries: one key, one action, and
+    /// the same answer in both. The reader keeps `e`, which is one article
+    /// rather than a source.
+    #[test]
+    fn r_refreshes_from_both_lists() {
+        assert_eq!(
+            module(Module::Sources, plain('r')),
+            Some(Action::RefreshSource)
+        );
+        assert_eq!(
+            module(Module::Entries, plain('r')),
+            Some(Action::RefreshSource)
+        );
+        assert_eq!(module(Module::Reader, plain('r')), None);
+        assert_eq!(module(Module::Reader, plain('e')), Some(Action::Extract));
+        assert_eq!(resolve(plain('r')), None, "`r` is nobody's global key");
+        // And the shifted one is still everything, from everywhere.
+        assert_eq!(resolve(plain('R')), Some(Action::RefreshAll));
     }
 
     /// A module's own binding is allowed to claim a key the global table

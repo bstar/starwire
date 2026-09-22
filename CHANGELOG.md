@@ -5,6 +5,23 @@ and this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Changed
+
+- **A refresh you asked for tries the failed articles again too.** `r` on a
+  source, `r` in the list of entries — which is where it is new — and `R` for
+  everything now offer every article in their scope that has no text of its
+  own back to the extractor at once, ignoring both the delay a transient
+  failure earned and the three-attempt ceiling: those are answers to "nobody
+  asked", and a key somebody pressed is not a timer. The reasons a page failed
+  yesterday are exactly the ones that change, and until now the only way to
+  try one again was `e`, one article at a time, with the article open. A free
+  sample behind a paywall is content rather than a failure and is left where
+  it is; a video is untouched; and a refresh nobody asked for — the one on
+  the clock, and the one at startup — still leaves the ceiling where it is,
+  or a page that cannot be read would cost a request every launch. The
+  status line says what is being refreshed and how many articles are being
+  tried: `refreshing Phoronix · 3 articles to try again`.
+
 ### Fixed
 
 - **A `403` is asked once more, as a browser.** Not every one of them is a
