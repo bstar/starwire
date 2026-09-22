@@ -180,7 +180,10 @@ in, and a redirect to plaintext is refused.
 **The pictures an article carries are drawn in it.** In a terminal with a
 graphics protocol they are the pictures; in one without, half blocks, which
 are coarse and are still a picture. `░` stands where one is going while it is
-on its way, so the text does not move when it lands.
+on its way — eight rows of it at most, whatever the cap below allows a
+picture that has arrived, so that an article with two pictures near the top
+of it opens on its own first sentence rather than on a screen of
+placeholder. The text under a picture moves once, when its real size lands.
 
 A picture is drawn at **its own size** when that fits: one image pixel per
 terminal pixel, which on a typical font is a 640-pixel-wide photograph across

@@ -1088,9 +1088,11 @@ mod tests {
             "the thread was parked after all: {:?}",
             started.elapsed()
         );
+        // The rule's sixty-one seconds from when the lease was asked for,
+        // give or take the call itself -- `started` is read before it.
         let wait = until.saturating_duration_since(started);
         assert!(
-            wait > MAX_PARK && wait <= Duration::from_secs(61),
+            wait > MAX_PARK && wait <= Duration::from_secs(62),
             "{wait:?}"
         );
 

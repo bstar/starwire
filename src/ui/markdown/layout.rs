@@ -42,11 +42,18 @@
 //! do not move when the bytes arrive, unless the size they arrive at says
 //! they should.
 //!
-//! A picture nothing knows the size of yet reserves the *whole* box -- the
-//! full width, the full cap -- because most article pictures fill it anyway,
-//! so the common case moves no rows at all when the bytes land. One that
-//! turns out to be small shrinks its box once; one that will never arrive
-//! collapses to the `[image: alt]` line once.
+//! A picture nothing knows the size of yet reserves the full width and at
+//! most [`LOADING_ROWS`] rows. The rows are a compromise and it is worth
+//! saying which way it goes: reserving the whole cap would mean the common
+//! case -- a picture that does fill it -- moves no rows at all when the
+//! bytes land, and that was what this did. It costs too much while they are
+//! on their way. The cap is a third of the reader, so on a tall terminal an
+//! article with two pictures in it opens as seventy-six rows of `░` with its
+//! first sentence below the fold, which is not an article anybody can read.
+//! Eight rows is enough to see that a picture is coming and little enough
+//! that the prose is still the page. When the size lands the box takes over,
+//! which moves the text under it once; one that will never arrive collapses
+//! to the `[image: alt]` line, as before.
 
 use std::collections::HashMap;
 
@@ -110,6 +117,16 @@ pub struct PictureSlot {
     pub url: String,
     pub alt: String,
 }
+
+/// The most rows a picture of unknown size stands in for.
+///
+/// Not the cap, which is a third of the reader and is what a picture that
+/// has arrived is allowed. A placeholder is not a picture: eight rows says
+/// one is coming without taking the article over while it does, and an
+/// article with two of them in it still opens on its own first sentence.
+/// The box is the cap or this, whichever is smaller, so a reader who has set
+/// `[reading] image_rows` low keeps their number.
+pub const LOADING_ROWS: u16 = 8;
 
 /// How many cells a picture of `natural` pixels is drawn in.
 ///
@@ -373,10 +390,9 @@ impl<'a> Writer<'a> {
             Some(PictureKnown::Natural(w, h)) => {
                 box_for((*w, *h), room, sizes.cap_rows, sizes.cell)
             }
-            // On its way, or not asked for yet. The full box, because most
-            // article pictures fill it and the rows then do not move when
-            // the bytes land.
-            _ => (room, sizes.cap_rows),
+            // On its way, or not asked for yet: the full width, and rows
+            // enough to show that something is coming. See LOADING_ROWS.
+            _ => (room, sizes.cap_rows.min(LOADING_ROWS)),
         }
     }
 
@@ -1164,10 +1180,11 @@ two"
         );
     }
 
-    /// Before anything is known a picture takes the whole box, so the rows
-    /// do not move when the bytes land at the size most of them land at.
+    /// Before anything is known a picture takes the full width and no more
+    /// than LOADING_ROWS rows, so an article with pictures in it is never a
+    /// screen of placeholder with its first sentence below the fold.
     #[test]
-    fn a_loading_picture_reserves_the_whole_box() {
+    fn a_loading_picture_reserves_the_full_width_and_a_few_rows() {
         let mut known = HashMap::new();
         let r = with_pictures(
             "![a](p.png)
@@ -1176,8 +1193,21 @@ two"
             &sizes(&known, 9),
         );
         assert_eq!(r.pictures.len(), 1);
-        assert_eq!((r.pictures[0].cols, r.pictures[0].rows), (40, 9));
-        assert_eq!(r.height, 9, "nine blank rows, and the trim left them");
+        assert_eq!(
+            (r.pictures[0].cols, r.pictures[0].rows),
+            (40, LOADING_ROWS),
+            "the cap is nine and the placeholder does not take all of it"
+        );
+        assert_eq!(r.height, LOADING_ROWS, "blank rows, and the trim left them");
+
+        // A cap under LOADING_ROWS is the reader's own number and wins.
+        let small = with_pictures(
+            "![a](p.png)
+",
+            40,
+            &sizes(&known, 3),
+        );
+        assert_eq!((small.pictures[0].cols, small.pictures[0].rows), (40, 3));
 
         // Explicitly loading is the same answer as never asked for.
         known.insert("p.png".to_string(), PictureKnown::Loading);

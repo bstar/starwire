@@ -42,6 +42,16 @@ and this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html)
   which on its own was enough to stop a reader's pictures arriving for the
   rest of the session.
 
+- **An article whose pictures are on their way is still an article.** A
+  picture nothing yet knows the size of reserved the whole box it was allowed
+  — the full width and a third of the reader — so on a 130-row terminal an
+  article with two pictures near the top of it opened as seventy-six rows of
+  `░` with its first sentence below the fold. A placeholder is not a picture:
+  it now takes eight rows at most, or the cap where that is smaller, which is
+  enough to show that something is coming and little enough that the prose is
+  still the page. The real box takes over when the size lands, which moves
+  the text under it once.
+
 - **A `403` is asked once more, as a browser.** Not every one of them is a
   wall: IFLScience sits behind a CloudFront rule that filters on the user
   agent and nothing else, so STAR/WIRE's own agent got a 403 and a 919-byte
