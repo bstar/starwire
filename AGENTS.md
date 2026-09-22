@@ -275,6 +275,18 @@ What was observed, so that the next person does not have to guess at it:
   Twenty-two entries in the reference database were stored as
   `<host> answered 403` with `attempts = 1`, which is what the 2 -> 3
   migration is for.
+- **A refresh while somebody reads, measured both ways.** A copy of the
+  reference database in kitty at 258x128, picture cache emptied, opening a
+  Drudge article with six pictures during the start-up refresh. Before the
+  September 2026 fix: eighty-two rows of `░`, no picture fetched for the
+  first thirty seconds, and the bar stuck on one Reddit feed for a minute at
+  a time -- four net threads asleep in `Politeness::lease`, with the
+  reader's pictures queued on the same lane behind them. After: forty-eight
+  rows of `░` and all six pictures drawn 1.6 seconds in, while the refresh
+  was two feeds old; three deferrals logged within fifty microseconds of
+  each other as the Reddit feeds came round, and the whole refresh done in
+  about two and a half minutes. Reddit is still one request a minute -- that
+  is the point of the rule -- but nothing else waits for it now.
 - **The site rules, against the sites.** GamingOnLinux without its footer,
   KitGuru without its share bar or its "Check Also" list, Arch's short news
   items extracting where they used to be refused, and a Bloomberg article

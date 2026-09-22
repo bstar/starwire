@@ -545,8 +545,14 @@ impl App {
                     else {
                         continue;
                     };
-                    let body = header::body(rect);
-                    let height = usize::from(body.height).max(1);
+                    // The article's own rows, not the body: the title, the
+                    // byline and the banner sit above them and never
+                    // scroll. Clamping against the body left an article a
+                    // little taller than the text area with its tail below
+                    // the frame and a limit of zero, so every `j` came
+                    // straight back to the top.
+                    let rows = reader::text_rows(rect, &self.reader_view(None)).unwrap_or(0);
+                    let height = usize::from(rows).max(1);
                     let max = total.saturating_sub(height);
                     let at = self.reader_scroll_of(id).min(max);
                     self.reader_scroll.insert(id, at);

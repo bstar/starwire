@@ -129,6 +129,23 @@ fn text_area(area: Rect, v: &View<'_>) -> Option<(Rect, Rect)> {
     Some((body, rest))
 }
 
+/// How many rows of the article's own text the reader can show.
+///
+/// The body, less the head that never scrolls -- the title, the byline, the
+/// banner where there is one, and the blank under them. It is the number a
+/// scroll is clamped against and the number `space` pages by, and it is a
+/// smaller one than the body: an article between the two used to have its
+/// tail below the frame and a scroll limit of zero, so every `j` came
+/// straight back to the top and the article could not be read past the
+/// first screen.
+///
+/// Measured through [`text_area`], the same arithmetic [`render`], [`hit`]
+/// and [`picture_rects`] use, so that what can be scrolled to and what is
+/// drawn cannot drift apart. `None` where there is nothing open or no room.
+pub fn text_rows(area: Rect, v: &View<'_>) -> Option<u16> {
+    text_area(area, v).map(|(_, rest)| rest.height)
+}
+
 /// Where one of this article's pictures is on the screen right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Visible {

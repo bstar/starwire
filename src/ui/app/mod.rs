@@ -1117,7 +1117,11 @@ impl App {
             ModuleId::Entries => {
                 super::panels::entries::visible_rows(rect, !self.layout.is_open(m))
             }
-            ModuleId::Reader => usize::from(starkit::chrome::header::body(rect).height),
+            // The article's own rows: `space` that paged by the whole
+            // body overshot by the head above it, which never scrolls.
+            ModuleId::Reader => usize::from(
+                super::panels::reader::text_rows(rect, &self.reader_view(None)).unwrap_or(0),
+            ),
         };
         i64::try_from(rows).unwrap_or(10).max(1)
     }
@@ -2094,6 +2098,92 @@ mod tests {
             app.reader_scroll_of(first),
             at,
             "it came back to where it was"
+        );
+    }
+
+    /// Put an article of exactly `rows` numbered lines in front of the
+    /// reader. A fenced block is not reflowed, so one source line is one
+    /// drawn row whatever the reader's width -- which is what lets a test
+    /// ask for a height rather than guess at one.
+    fn article_of_rows(app: &mut App, fk: &mut fake::Fake, rows: usize) {
+        let id = app.open_article().expect("an article");
+        let body: String = (0..rows).map(|n| format!("line {n}\n")).collect();
+        {
+            let mut s = fk.state_mut();
+            let article = s.article.as_mut().expect("the open article");
+            article.markdown = format!("```\n{body}```\n").into();
+            // The reader's layout cache keys on this, so text that changed
+            // under an entry that did not has to say so.
+            article.extracted_at = Some(crate::wire::testing::now());
+            // And the window copies the view out when the version moves,
+            // which is `apply`'s job and not a test's -- this is the one
+            // place in the suite that writes to `State` by hand.
+            s.version += 1;
+        }
+        app.tick();
+        draw(app);
+        assert_eq!(app.open_article(), Some(id));
+        assert_eq!(app.rendered_height(), Some(rows), "one line, one row");
+    }
+
+    /// The rows an article's own text is drawn in are the body less the
+    /// head above it, and the scroll is clamped against those rather than
+    /// against the body. An article taller than the first but shorter than
+    /// the second used to have its tail below the frame and a limit of
+    /// zero, so every `j` was clamped straight back to the top and the
+    /// article could not be read past its first screen.
+    #[test]
+    fn an_article_a_little_taller_than_its_text_area_still_scrolls() {
+        let (mut app, mut fk, _dir) = app();
+        into_feed(&mut app, &mut fk, "Tech", "Hacker News");
+        app.key(code(KeyCode::Enter));
+        settle(&mut app, &mut fk);
+        draw(&mut app);
+        let id = app.open_article().expect("an article");
+
+        let rect = app
+            .layout
+            .last
+            .as_ref()
+            .expect("a drawn frame")
+            .rect_of(ModuleId::Reader);
+        let body = starkit::chrome::header::body(rect).height;
+        let rows = super::super::panels::reader::text_rows(rect, &app.reader_view(None))
+            .expect("an open reader");
+        assert!(
+            rows > 0 && rows < body,
+            "the head takes rows off the body: {rows} of {body}"
+        );
+
+        // Two rows taller than the text area, and still inside the body --
+        // which is exactly the range the old clamp called "it all fits".
+        let total = usize::from(rows) + 2;
+        assert!(
+            total <= usize::from(body),
+            "{total} against a body of {body}"
+        );
+        article_of_rows(&mut app, &mut fk, total);
+
+        app.key(key('j'));
+        draw(&mut app);
+        app.key(key('j'));
+        draw(&mut app);
+        assert_eq!(
+            app.reader_scroll_of(id),
+            2,
+            "every j was clamped back to the top"
+        );
+
+        // And it stops there: the last row of the article is the last row
+        // of the text area, and no further.
+        for _ in 0..20 {
+            app.key(key('j'));
+            draw(&mut app);
+        }
+        assert_eq!(app.reader_scroll_of(id), total - usize::from(rows));
+        assert!(
+            draw(&mut app).contains(&format!("line {}", total - 1)),
+            "the last line is drawn"
         );
     }
 

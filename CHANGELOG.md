@@ -52,6 +52,16 @@ and this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html)
   still the page. The real box takes over when the size lands, which moves
   the text under it once.
 
+- **An article a little too tall to fit can be scrolled again.** The
+  reader's scroll was clamped against the whole body of the panel, but the
+  title, the byline and the banner above the text never scroll, so the
+  article's own rows are fewer than that. One whose length fell between the
+  two had its tail below the frame *and* a scroll limit of zero: the text
+  visibly ran past the bottom and every `j` was clamped straight back to the
+  top. Both the clamp and what `space` pages by now count the rows the text
+  is actually drawn in, measured through the same arithmetic the renderer
+  uses.
+
 - **A `403` is asked once more, as a browser.** Not every one of them is a
   wall: IFLScience sits behind a CloudFront rule that filters on the user
   agent and nothing else, so STAR/WIRE's own agent got a 403 and a 919-byte
