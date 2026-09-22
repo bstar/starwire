@@ -177,6 +177,13 @@ impl Pictures {
         self.entries.iter().find(|(u, _)| u == url).map(|(_, s)| s)
     }
 
+    /// Every URL it has anything to say about, oldest touch first.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &PictureState)> {
+        self.entries
+            .iter()
+            .map(|(url, state)| (url.as_str(), state))
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }

@@ -16,6 +16,13 @@
 //!
 //! ## Determinism
 //!
+//! One exception, and it is the pictures: those two frames are built with
+//! `Mode::Blocks`, because half blocks are the one way of drawing a picture
+//! that produces cells a snapshot can hold -- a graphics protocol is an
+//! escape sequence in one cell and says nothing about what it drew. Every
+//! other frame stays on `Off`, where an image is the `[image: alt]` line and
+//! the frames are the ones 0.0.1 accepted.
+//!
 //! Every app here is built with [`starkit::graphics::Graphics::disabled`],
 //! UTC, and the clock pinned to [`crate::wire::testing::now`] -- the same
 //! instant the fixture's own publication dates are measured from, so an age
@@ -29,7 +36,7 @@
 use std::path::PathBuf;
 
 use starkit::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use starkit::graphics::Graphics;
+use starkit::graphics::{Graphics, Mode};
 use starkit::ratatui::buffer::Buffer;
 use starkit::ratatui::layout::Rect;
 
@@ -86,6 +93,18 @@ fn settle(app: &mut App, fk: &mut fake::Fake) {
 
 /// An app over the fixture, pinned to `theme`, UTC and the fixture's clock.
 fn build(theme: &str) -> (App, fake::Fake) {
+    build_with(theme, Graphics::disabled())
+}
+
+/// The same, drawing pictures as half blocks -- which is the only way of
+/// drawing one that a snapshot can hold.
+fn build_drawing_pictures(theme: &str) -> (App, fake::Fake) {
+    let mut graphics = Graphics::disabled();
+    graphics.set_mode(Mode::Blocks);
+    build_with(theme, graphics)
+}
+
+fn build_with(theme: &str, graphics: Graphics) -> (App, fake::Fake) {
     let cfg = Config {
         ui: Ui {
             theme: theme.into(),
@@ -99,7 +118,7 @@ fn build(theme: &str) -> (App, fake::Fake) {
         cfg,
         PathBuf::from("/nonexistent/config.toml"),
         None,
-        Graphics::disabled(),
+        graphics,
     );
     app.set_tz(jiff::tz::TimeZone::UTC);
     app.set_now(testing::now());
@@ -257,6 +276,31 @@ fn the_three_articles_that_are_not_text() {
     settle(&mut app, &mut fk);
     open(&mut app, &mut fk, "transistor");
     insta::assert_snapshot!("article-video", render(&mut app, 100, 30));
+}
+
+/// An article with pictures in it, twice: the frame the reader sees while
+/// they are on their way, and the frame once they have arrived.
+///
+/// The first shows what the rows are reserved as -- the whole box, because
+/// most article pictures fill it -- and the second shows the two answers a
+/// picture can come back with: the file, drawn, and the `data:` URI nothing
+/// fetches, collapsed to its alt line.
+#[test]
+fn an_article_with_pictures_in_it() {
+    let (mut app, mut fk) = build_drawing_pictures("terminal");
+    cursor_to(&mut app, &mut fk, "Phoronix");
+    app.key(code(KeyCode::Enter));
+    settle(&mut app, &mut fk);
+    open(&mut app, &mut fk, "A post with pictures");
+
+    // The first draw is what asks for them, so this frame is the one before
+    // anything has been fetched.
+    insta::assert_snapshot!("article-pictures-loading", render(&mut app, 100, 30));
+
+    // Run what that draw asked for, and draw again.
+    fk.pump();
+    settle(&mut app, &mut fk);
+    insta::assert_snapshot!("article-pictures", render(&mut app, 100, 30));
 }
 
 /// The peek: an article open, the cursor jumped back up to the entries, and

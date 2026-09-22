@@ -43,7 +43,14 @@ pub struct Fake {
 pub fn handle(cfg: &WireConfig) -> (Handle, Fake) {
     let db = seeded();
     let http = Replay::open(&testing::testdata().join("replay")).expect("the replay directory");
-    let (handle, driver) = testing::driver_over(cfg, db, http);
+    // No disk cache, whatever the caller's config says. `Config::core()`
+    // names the *reader's* own `cache/pictures`, and a test that wrote into
+    // it would be a test that changes the machine it is run on.
+    let cfg = WireConfig {
+        pictures_dir: None,
+        ..cfg.clone()
+    };
+    let (handle, driver) = testing::driver_over(&cfg, db, http);
     let mut fake = Fake { driver };
     // The feed list is loaded synchronously, exactly as `Handle::spawn` does
     // it, so the first frame a test draws already has rows in it.
@@ -201,12 +208,20 @@ fn seeded() -> Db {
         &mut db,
         phoronix,
         FeedKind::Web,
-        &[entry(
-            "ph-1",
-            "A kernel release worth keeping",
-            Some("https://www.phoronix.com/news/one"),
-            at(DAY),
-        )],
+        &[
+            entry(
+                "ph-1",
+                "A kernel release worth keeping",
+                Some("https://www.phoronix.com/news/one"),
+                at(DAY),
+            ),
+            entry(
+                "ph-2",
+                "A post with pictures",
+                Some("https://www.phoronix.com/news/two"),
+                at(2 * DAY),
+            ),
+        ],
     );
     store(
         &mut db,
@@ -242,6 +257,27 @@ fn seeded() -> Db {
         },
     )
     .expect("storing the fixture article");
+
+    // An article with two pictures in it: one the replay directory answers
+    // for, and one carried inline as a `data:` URI, which nothing fetches
+    // and which the reader draws as its alt line.
+    articles::put(
+        &db,
+        find(&db, "A post with pictures"),
+        &ArticleResult {
+            status: ArticleStatus::Extracted,
+            title: Some("A post with pictures".into()),
+            markdown: Some(PICTURES_MD.to_string()),
+            byline: Some("A N Other".into()),
+            site_name: Some("phoronix.com".into()),
+            image_url: None,
+            excerpt: None,
+            source_url: Some("https://www.phoronix.com/news/two".into()),
+            error: None,
+            retry_in_secs: None,
+        },
+    )
+    .expect("storing the picture article");
 
     // One whose page has not been fetched yet, and one that will not be.
     articles::put(&db, find(&db, "not arrived"), &pending()).expect("a pending article");
@@ -286,12 +322,34 @@ fn seeded() -> Db {
         articles::put(&db, find(&db, needle), &feed_content(text)).expect("feed text");
     }
 
-    let read = [find(&db, "Something already"), find(&db, "And another")];
+    // The picture article is read from the start, so that adding it left
+    // every unread count in the frame snapshots where it was: what it is
+    // there to exercise is the reader, and it is opened by name.
+    let read = [
+        find(&db, "Something already"),
+        find(&db, "And another"),
+        find(&db, "A post with pictures"),
+    ];
     entries::set_read(&mut db, &read, true).expect("two read entries");
     entries::set_starred(&db, find(&db, "kernel release"), true).expect("a starred entry");
 
     db
 }
+
+/// An article with the two kinds of picture in it: one that can be fetched,
+/// and one that never will be.
+pub const PICTURES_MD: &str = "\
+Two pictures, and some words to put them among.
+
+![a kernel graph](https://example.org/pictures/hero.png)
+
+The first is a real file in the replay directory; the second is carried in
+the markdown itself, which nothing fetches.
+
+![an inline diagram](data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==)
+
+And a line after them both.
+";
 
 fn add(
     db: &Db,
@@ -386,8 +444,8 @@ mod tests {
         fk.pump();
         let state = handle.state();
         let rows = &state.page.rows;
-        assert_eq!(rows.len(), 7, "{rows:#?}");
-        assert_eq!(rows.iter().filter(|r| r.read).count(), 2);
+        assert_eq!(rows.len(), 8, "{rows:#?}");
+        assert_eq!(rows.iter().filter(|r| r.read).count(), 3);
         assert_eq!(rows.iter().filter(|r| r.starred).count(), 1);
         assert_eq!(
             rows.iter().filter(|r| r.kind == EntryKind::Video).count(),
@@ -469,6 +527,53 @@ mod tests {
         let article = handle.state().article.clone().expect("an article row");
         assert_eq!(article.status, ArticleStatus::Pending);
         assert!(article.markdown.is_empty());
+    }
+
+    /// The two kinds of picture an article carries, end to end through the
+    /// real core: one the replay directory answers for, and one carried as
+    /// a `data:` URI, which is refused where it is asked about rather than
+    /// by a request that could only fail.
+    #[test]
+    fn the_picture_article_fetches_one_and_refuses_the_other() {
+        use crate::wire::PictureState;
+
+        let hero = "https://example.org/pictures/hero.png";
+        let inline = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+        assert!(PICTURES_MD.contains(hero), "the fixture carries it");
+        assert!(PICTURES_MD.contains(inline));
+
+        let cfg = WireConfig::default();
+        let (handle, mut fk) = handle(&cfg);
+        handle.send(Command::OpenFeed(Selection::All));
+        fk.pump();
+        let id = fk.entry("A post with pictures");
+        handle.send(Command::OpenEntry(id));
+        fk.pump();
+
+        // What the reader's own draw pass would ask for, at the box a
+        // picture of this size is given.
+        for url in [hero, inline] {
+            handle.send(Command::FetchPicture {
+                url: url.to_string(),
+                max_w: 640,
+                max_h: 160,
+            });
+        }
+        fk.pump();
+
+        let state = handle.state();
+        match state.pictures.get(hero) {
+            Some(PictureState::Ready(picture)) => {
+                assert_eq!(picture.natural, (64, 32));
+                assert_eq!(picture.image.dimensions(), (64, 32), "never upscaled");
+                assert_eq!(picture.path, None, "the fixture keeps nothing on disk");
+            }
+            other => panic!("the hero picture is {other:?}"),
+        }
+        match state.pictures.get(inline) {
+            Some(PictureState::Failed(why)) => assert!(why.contains("not https"), "{why}"),
+            other => panic!("the inline picture is {other:?}"),
+        }
     }
 
     #[test]

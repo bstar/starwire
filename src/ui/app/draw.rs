@@ -1,27 +1,38 @@
 //! Drawing one frame, and the small view structs the panels render from.
 //!
 //! The order is fixed: the background, the three modules top to bottom, the
-//! status row, then whatever overlay is open -- last, because it is drawn
-//! over everything and STAR/KIT's own `chrome::overlay` clears the cells
-//! under it first.
+//! pictures, the status row, then whatever overlay is open -- last, because
+//! it is drawn over everything and STAR/KIT's own `chrome::overlay` clears
+//! the cells under it first.
+//!
+//! The pictures are a pass of their own, between the reader and the status
+//! row, and that position is not a preference. A graphics placement is not
+//! erased by painting the cell it sits in -- only by another placement or by
+//! a delete -- so a picture drawn before an overlay clears those cells is a
+//! picture the terminal is never told about, and one drawn after the status
+//! row would sit on top of it. See `ui/pictures.rs`.
 //!
 //! Nothing here reads `State`. Everything a panel draws has already been
 //! copied into [`super::ViewData`] by `refresh`, which is the only place the
 //! read lock is taken; a draw that reached back for the truth would hold
 //! that lock across a render.
 
+use std::collections::HashSet;
 use std::time::Instant;
 
 use starkit::chrome::header;
+use starkit::graphics::ImageId;
 use starkit::ratatui::buffer::Buffer;
 use starkit::ratatui::layout::Rect;
 use starkit::ratatui::style::{Modifier, Style};
 
 use crate::ui::layout;
 use crate::ui::panels::{self, entries, reader, rgb, sources, ModuleId};
+use crate::ui::pictures;
 use crate::ui::status;
 use crate::ui::theme::Theme;
 use crate::wire::feed::{ArticleStatus, EntryKind};
+use crate::wire::{Command, PictureState};
 
 use super::App;
 
@@ -61,15 +72,25 @@ impl App {
         let reader_rect = regions.rect_of(ModuleId::Reader);
         let body = header::body(reader_rect);
         let cols = reader::text_cols(body.width, self.cfg.reading.width);
-        let rendered = self.rendered(cols);
+        // A font zoom changes how many rows a picture of a given size wants,
+        // and nothing else notices: the terminal reports the same number of
+        // cells it did before.
+        let cell = self.cell();
+        if self.last_cell != Some(cell) {
+            self.last_cell = Some(cell);
+            self.pictures_gen += 1;
+        }
+        let cap_rows = self.cap_rows(body.height);
+        let rendered = self.rendered(cols, cap_rows);
         self.links = rendered
             .as_ref()
             .and_then(|r| r.links.iter().map(|l| l.number).max())
             .unwrap_or(0);
         {
-            let v = self.reader_view(rendered);
+            let v = self.reader_view(rendered.clone());
             reader::render(reader_rect, buf, &v, &mut bars);
         }
+        let drawn = self.paint_pictures(reader_rect, rendered, buf);
 
         status::render(regions.status, buf, &self.status_view(Instant::now()));
 
@@ -90,7 +111,114 @@ impl App {
             reverse_cell(buf, regions.area, x, y);
         }
 
+        // Whatever is not on the screen is not worth the terminal's memory,
+        // and this is the only point in the frame where that is knowable.
+        self.graphics.forget_unused(&drawn);
+
         self.bars = bars;
+    }
+
+    /// Draw every picture the reader placed, and ask for what is missing.
+    ///
+    /// Returns what was put on the screen through a protocol, which is what
+    /// the terminal is asked to keep.
+    fn paint_pictures(
+        &mut self,
+        rect: Rect,
+        rendered: Option<std::sync::Arc<crate::ui::markdown::layout::Rendered>>,
+        buf: &mut Buffer,
+    ) -> HashSet<ImageId> {
+        let mut drawn = HashSet::new();
+        if !self.pictures_on() {
+            return drawn;
+        }
+        let Some(rendered) = rendered else {
+            return drawn;
+        };
+        if rendered.pictures.is_empty() {
+            return drawn;
+        }
+
+        let places = {
+            let v = self.reader_view(Some(std::sync::Arc::clone(&rendered)));
+            reader::picture_rects(rect, &v)
+        };
+        // Big enough that nothing drawn this frame is evicted by something
+        // else drawn this frame, which is the failure that turns a cache
+        // into a cost. The overlay's own picture is the headroom.
+        self.graphics.set_capacity(places.len() + 8);
+
+        let (cw, ch) = self.cell();
+        let faint = starkit::ratatui::style::Style::default().fg(rgb(self.theme.dim));
+        for place in &places {
+            let slot = &rendered.pictures[place.index];
+            match self.view.pictures.get(&slot.url) {
+                Some(PictureState::Ready(picture)) => {
+                    let img = if place.clipped {
+                        pictures::crop_rows(&picture.image, place.cut_top, place.rect.height, ch)
+                    } else {
+                        std::sync::Arc::clone(&picture.image)
+                    };
+                    // A cropped picture is this window's own bytes and is
+                    // named by the recipe that made it; an uncropped one is
+                    // the core's, and its address is its name.
+                    let id = if place.clipped {
+                        ImageId::of(&(
+                            &slot.url,
+                            place.cut_top,
+                            place.rect.height,
+                            place.rect.width,
+                        ))
+                    } else {
+                        ImageId::of_arc(&img)
+                    };
+                    if pictures::draw_one(
+                        &mut self.graphics,
+                        id,
+                        &img,
+                        place.rect,
+                        place.clipped,
+                        buf,
+                    ) {
+                        drawn.insert(id);
+                    }
+                }
+                // On its way, or about to be asked for. Either way the rows
+                // are already reserved, and a quiet block of `\u{2591}` says
+                // so.
+                _ => pictures::placeholder(place.rect, buf, faint),
+            }
+        }
+
+        // What to ask for: everything placed, and everything within two
+        // screens below the fold, so a scroll arrives at pictures rather
+        // than at placeholders. Two screens because the fetch is a request
+        // and a decode, which is a second or so, and a screen a second is
+        // faster than anybody reads.
+        let body = header::body(rect);
+        let ahead = usize::from(body.height).saturating_mul(2);
+        let scroll = self
+            .open_article()
+            .map(|id| self.reader_scroll_of(id))
+            .unwrap_or(0);
+        let until = scroll.saturating_add(ahead);
+        for slot in &rendered.pictures {
+            if usize::from(slot.row) > until {
+                break;
+            }
+            let want = (
+                u32::from(slot.cols) * u32::from(cw),
+                u32::from(slot.rows) * u32::from(ch),
+            );
+            if wants_more(self.view.pictures.get(&slot.url), want) {
+                self.core.send(Command::FetchPicture {
+                    url: slot.url.clone(),
+                    max_w: want.0,
+                    max_h: want.1,
+                });
+            }
+        }
+        drawn
     }
 
     // -- the views ----------------------------------------------------------
@@ -289,6 +417,24 @@ impl App {
             self.view.entry_source,
             self.cursor_of(ModuleId::Entries) + 1
         )
+    }
+}
+
+/// Whether a picture is worth asking the core for.
+///
+/// Nothing known about it, or something known that is smaller than the box
+/// it is now being drawn in *and* smaller than the picture really is. The
+/// second half is what stops a small picture from being asked for again on
+/// every frame for ever: a logo drawn at its own size has nothing more to
+/// give, however much room there is.
+fn wants_more(state: Option<&PictureState>, want: (u32, u32)) -> bool {
+    match state {
+        None => true,
+        Some(PictureState::Ready(picture)) => {
+            let (w, h) = picture.image.dimensions();
+            (want.0 > w || want.1 > h) && (w < picture.natural.0 || h < picture.natural.1)
+        }
+        Some(PictureState::Loading | PictureState::Failed(_)) => false,
     }
 }
 

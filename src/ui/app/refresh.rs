@@ -21,6 +21,7 @@ use crate::ui::panels::{entries, sources};
 use crate::ui::stack::Level;
 use crate::wire::feed::{ArticleView, EntryId, FeedId, FolderId, Selection};
 use crate::wire::import::ImportReport;
+use crate::wire::PictureState;
 use crate::wire::{ImportOffer, RefreshProgress};
 
 use super::App;
@@ -107,6 +108,15 @@ pub struct ViewData {
     pub last_import: Option<ImportReport>,
     pub extract_on: bool,
     pub extract_busy: bool,
+
+    // -- the pictures -----------------------------------------------------
+    /// What the core knows about the open article's pictures, by URL.
+    ///
+    /// Copied rather than read through the lock while drawing, like
+    /// everything else here -- and only when the store's own version has
+    /// moved, because the common frame is one where no picture arrived and
+    /// the map is a map of `Arc`s nobody has touched.
+    pub pictures: std::collections::HashMap<String, crate::wire::PictureState>,
 }
 
 impl App {
@@ -139,6 +149,20 @@ impl App {
             let source_crumbs = self.build_source_crumbs(&state);
 
             let (entry_rows, entry_ids, entry_read) = build_entry_rows(&state, self.now());
+
+            // The pictures are copied only when one of them moved. Every
+            // other frame keeps the map the last one built, which is what
+            // makes a store of thirty-two decoded pictures cost nothing to
+            // have.
+            let pictures = if state.pictures.version == self.seen_pictures_version {
+                std::mem::take(&mut self.view.pictures)
+            } else {
+                self.seen_pictures_version = state.pictures.version;
+                // Every laid-out article in the render cache reserved rows
+                // against what was known a moment ago.
+                self.pictures_gen += 1;
+                picture_map(&state)
+            };
             let entry_source = selection_name(&state, &state.selection);
             let entry_aggregate = !matches!(state.selection, Selection::Feed(_));
 
@@ -170,6 +194,7 @@ impl App {
                 last_import: state.last_import.clone(),
                 extract_on: state.settings.extract,
                 extract_busy: state.extract_inflight > 0 || !state.extract_queue.is_empty(),
+                pictures,
             };
         }
         // The badge needs the spinner, which needs the clock, which is this
@@ -293,6 +318,15 @@ impl App {
             frame.cursor_key = Some(keys[frame.cursor].clone());
         }
     }
+}
+
+/// Every picture the core has anything to say about, by URL.
+fn picture_map(state: &crate::wire::State) -> std::collections::HashMap<String, PictureState> {
+    state
+        .pictures
+        .iter()
+        .map(|(url, state)| (url.to_string(), state.clone()))
+        .collect()
 }
 
 /// The spinner beside the refresh count. Braille, as everywhere else in the

@@ -55,7 +55,7 @@ pub mod youtube;
 // reached for: a `pub use` nothing has asked for is a warning in a binary
 // crate, and the rest of each module is public where it lives.
 pub use handle::{Command, Event, Handle, ImportOffer, NoteLevel, OpenKind, RefreshScope, Setting};
-pub use state::{RefreshProgress, State};
+pub use state::{PictureState, RefreshProgress, State};
 
 /// Everything the terminal hands the core once, at startup.
 ///

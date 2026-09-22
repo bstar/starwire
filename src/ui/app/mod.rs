@@ -101,6 +101,17 @@ pub struct App {
     /// render cache is a miss at once -- see `markdown::cache::Key`.
     theme_gen: u64,
     graphics: Graphics,
+    /// Bumped whenever anything the reader's pictures depend on moved --
+    /// one arrived, the cell size changed under a font zoom, the graphics
+    /// mode changed, the cap changed, they were turned off. Part of the
+    /// render cache's key, for `theme_gen`'s reason: the question is only
+    /// ever "is the laid-out article still the answer".
+    pictures_gen: u64,
+    /// The store's own version, as of the last `refresh`.
+    seen_pictures_version: u64,
+    /// The cell size the last frame laid out against, so a font zoom is
+    /// noticed as the change to the layout that it is.
+    last_cell: Option<(u16, u16)>,
     layout: LayoutState,
     stack: Stack,
     overlays: Overlays,
@@ -203,6 +214,9 @@ impl App {
             theme_name,
             theme_gen: 0,
             graphics,
+            pictures_gen: 0,
+            seen_pictures_version: u64::MAX,
+            last_cell: None,
             layout,
             stack: Stack::new(),
             overlays: Overlays::new(),
@@ -1375,6 +1389,9 @@ impl App {
                 if !self.graphics.set_mode(mode) {
                     self.say("graphics: on restart");
                 }
+                // Every laid-out article reserved rows against the mode
+                // that was up, and `off` reserved none at all.
+                self.pictures_gen += 1;
                 self.repaint = true;
             }
         }
@@ -1434,31 +1451,84 @@ impl App {
 
     // -- the reader's text --------------------------------------------------
 
+    /// Whether this article's pictures are drawn at all.
+    ///
+    /// Two switches, at opposite ends of the program: `[articles] images`
+    /// decides whether the markdown keeps a picture and whether the core
+    /// fetches one, and `[ui] graphics = off` decides whether this terminal
+    /// draws any. Either one off is the `[image: alt]` line 0.0.1 drew.
+    pub(super) fn pictures_on(&self) -> bool {
+        self.cfg.articles.images && self.graphics.mode() != Mode::Off
+    }
+
+    /// How big a cell is, in pixels, or the stand-in where nothing measured
+    /// one -- over ssh, inside a multiplexer, in a terminal that does not
+    /// report it.
+    pub(super) fn cell(&self) -> (u16, u16) {
+        self.graphics
+            .cell_size()
+            .unwrap_or(super::pictures::DEFAULT_CELL)
+    }
+
+    /// The most rows one picture may take: `[reading] image_rows`, or a
+    /// third of the reader's body where that is zero.
+    ///
+    /// A third rather than a half because the point of the reader is the
+    /// prose: a picture that leaves two lines of it on the screen has taken
+    /// the page over. It is the body's own height, so the answer follows a
+    /// resize and a fold.
+    pub(super) fn cap_rows(&self, body_height: u16) -> u16 {
+        match self.cfg.reading.image_rows {
+            0 => (body_height / 3).max(1),
+            n => n.min(body_height.max(1)),
+        }
+    }
+
     /// The open article, laid out for the width the reader is drawing at.
     ///
     /// Through the cache, keyed by the entry, when its text was last
-    /// written, the width and which theme is up -- so `n` and `p` back and
-    /// forth over a handful of articles, and a `<` that changes the width,
-    /// all stay warm.
+    /// written, the width, which theme is up, and what is known about the
+    /// pictures -- so `n` and `p` back and forth over a handful of articles,
+    /// and a `<` that changes the width, all stay warm, while a picture
+    /// arriving at a size nothing had reserved rows for lays it out again.
     pub(super) fn rendered(
         &mut self,
         width: u16,
+        cap_rows: u16,
     ) -> Option<std::sync::Arc<markdown::layout::Rendered>> {
         let article = self.view.article.clone()?;
         if width == 0 {
             return None;
         }
+        let cap = if self.pictures_on() { cap_rows } else { 0 };
         let key = markdown::cache::Key {
             entry: article.entry,
             extracted_at: article.extracted_at,
             width,
             theme_gen: self.theme_gen,
-            picture_rows: 0,
-            pictures_gen: 0,
+            picture_rows: cap,
+            pictures_gen: self.pictures_gen,
         };
         let theme = self.theme.clone();
         let text = article.markdown.clone();
         let title = article.title.clone();
+        // Built here rather than read from the store inside the layout: the
+        // layout is a pure function of what it is told, which is what makes
+        // its arithmetic testable without a core behind it.
+        let known: std::collections::HashMap<String, markdown::layout::PictureKnown> = if cap > 0 {
+            self.view
+                .pictures
+                .iter()
+                .map(|(url, state)| (url.clone(), known_size(state)))
+                .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
+        let sizes = markdown::layout::PictureSizes {
+            cap_rows: cap,
+            cell: self.cell(),
+            known: &known,
+        };
         let rendered = self.cache.get_or_insert_with(key, || {
             let mut doc = markdown::parse::parse(&text);
             drop_repeated_title(&mut doc, &title);
@@ -1467,7 +1537,7 @@ impl App {
                 &markdown::layout::LayoutCtx {
                     theme: &theme,
                     width,
-                    pictures: None,
+                    pictures: (cap > 0).then_some(&sizes),
                 },
             )
         });
@@ -1566,6 +1636,18 @@ impl App {
     #[cfg(test)]
     pub(crate) fn note_text(&self) -> Option<&str> {
         self.note.as_ref().map(|(t, _, _)| t.as_str())
+    }
+}
+
+/// What the layout is told about one picture.
+fn known_size(state: &crate::wire::PictureState) -> markdown::layout::PictureKnown {
+    use crate::wire::PictureState as P;
+    match state {
+        P::Loading => markdown::layout::PictureKnown::Loading,
+        P::Failed(_) => markdown::layout::PictureKnown::Failed,
+        P::Ready(picture) => {
+            markdown::layout::PictureKnown::Natural(picture.natural.0, picture.natural.1)
+        }
     }
 }
 

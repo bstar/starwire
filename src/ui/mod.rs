@@ -34,6 +34,7 @@ pub mod layout;
 pub mod markdown;
 pub mod overlays;
 pub mod panels;
+pub mod pictures;
 pub mod stack;
 pub mod status;
 pub mod theme;

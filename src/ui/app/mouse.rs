@@ -186,10 +186,22 @@ impl App {
             ModuleId::Reader => {
                 let body = header::body(rect);
                 let cols = reader::text_cols(body.width, self.cfg.reading.width);
-                let rendered = self.rendered(cols);
-                let v = self.reader_view(rendered);
-                if let Some(reader::Hit::Link(n)) = reader::hit(rect, &v, x, y) {
-                    self.open_link_at(n);
+                let cap_rows = self.cap_rows(body.height);
+                let rendered = self.rendered(cols, cap_rows);
+                let v = self.reader_view(rendered.clone());
+                match reader::hit(rect, &v, x, y) {
+                    Some(reader::Hit::Link(n)) => self.open_link_at(n),
+                    Some(reader::Hit::Picture(i)) => {
+                        // The slot list is the same one the last draw
+                        // placed from, so the index cannot name a picture
+                        // that is not on the screen.
+                        if let Some(url) =
+                            rendered.and_then(|r| r.pictures.get(i).map(|p| p.url.clone()))
+                        {
+                            self.open_picture(url);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -263,6 +275,12 @@ impl App {
                 self.act(Action::OpenBrowser);
             }
         }
+    }
+
+    /// A click on a picture opens it.
+    fn open_picture(&mut self, url: String) {
+        self.core.send(Command::OpenPicture(url));
+        self.say("opening picture");
     }
 
     /// The same as the `o<n>` chord's, for a click straight on a link.
