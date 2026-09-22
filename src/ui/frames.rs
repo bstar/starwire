@@ -303,6 +303,26 @@ fn an_article_with_pictures_in_it() {
     insta::assert_snapshot!("article-pictures", render(&mut app, 100, 30));
 }
 
+/// The picture overlay, on the article's first picture, once it has
+/// arrived: the box, the picture grown into it, and the footer saying what
+/// it is and by how much.
+#[test]
+fn one_picture_as_large_as_the_window_allows() {
+    let (mut app, mut fk) = build_drawing_pictures("terminal");
+    cursor_to(&mut app, &mut fk, "Phoronix");
+    app.key(code(KeyCode::Enter));
+    settle(&mut app, &mut fk);
+    open(&mut app, &mut fk, "A post with pictures");
+    // The first draw asks for the pictures; this runs that and takes the
+    // answer, so the overlay opens on a picture that is here.
+    render(&mut app, 100, 30);
+    fk.pump();
+    settle(&mut app, &mut fk);
+
+    app.open_picture_for_tests(0);
+    insta::assert_snapshot!("picture-overlay", render(&mut app, 100, 30));
+}
+
 /// The peek: an article open, the cursor jumped back up to the entries, and
 /// READER keeping the height it had.
 #[test]

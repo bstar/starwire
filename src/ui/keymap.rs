@@ -567,6 +567,11 @@ pub const MOUSE: &[MouseHelp] = &[
         group: "reader",
     },
     MouseHelp {
+        gesture: "click a picture",
+        label: "open it",
+        group: "reader",
+    },
+    MouseHelp {
         gesture: "wheel",
         label: "scroll three rows",
         group: "lists",

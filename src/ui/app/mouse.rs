@@ -192,14 +192,22 @@ impl App {
                 match reader::hit(rect, &v, x, y) {
                     Some(reader::Hit::Link(n)) => self.open_link_at(n),
                     Some(reader::Hit::Picture(i)) => {
-                        // The slot list is the same one the last draw
-                        // placed from, so the index cannot name a picture
-                        // that is not on the screen.
-                        if let Some(url) =
-                            rendered.and_then(|r| r.pictures.get(i).map(|p| p.url.clone()))
-                        {
-                            self.open_picture(url);
-                        }
+                        // The slot list is the same one the last draw placed
+                        // from, so the index cannot name a picture that is
+                        // not on the screen. The whole article's pictures go
+                        // with it, so `n` and `p` in the overlay walk them.
+                        let shown: Vec<crate::ui::overlays::picture::Shown> = rendered
+                            .map(|r| {
+                                r.pictures
+                                    .iter()
+                                    .map(|p| crate::ui::overlays::picture::Shown {
+                                        url: p.url.clone(),
+                                        alt: p.alt.clone(),
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        self.open_picture_at(i, &shown);
                     }
                     _ => {}
                 }
@@ -275,12 +283,6 @@ impl App {
                 self.act(Action::OpenBrowser);
             }
         }
-    }
-
-    /// A click on a picture opens it.
-    fn open_picture(&mut self, url: String) {
-        self.core.send(Command::OpenPicture(url));
-        self.say("opening picture");
     }
 
     /// The same as the `o<n>` chord's, for a click straight on a link.

@@ -1,7 +1,8 @@
 //! What is drawn over the column: the help, the import, a feed to add, the
-//! settings, a confirmation, a search.
+//! settings, a confirmation, a search, and one picture as large as the
+//! window allows.
 //!
-//! One rule holds the six together, STAR/FOLD's and STAR/CORD's before it:
+//! One rule holds the seven together, STAR/FOLD's and STAR/CORD's before it:
 //! **only one is ever open**, and while one is, it takes every key -- a
 //! dialogue drawn over a panel that lets a key through to the panel
 //! underneath is a dialogue you can type through, which is the bug keeping
@@ -28,9 +29,11 @@
 pub mod add_feed;
 pub mod confirm;
 pub mod import;
+pub mod picture;
 pub mod search;
 pub mod settings;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use starkit::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -44,6 +47,7 @@ use crate::ui::keymap::{BINDINGS, MOUSE};
 use crate::ui::theme::Theme;
 use crate::ui::Bars;
 use crate::wire::feed::{FeedId, Selection};
+use crate::wire::PictureState;
 
 /// What a [`confirm::Confirm`] is asking about, carried through unopened so
 /// the caller learns it again only once the answer is yes.
@@ -63,6 +67,22 @@ pub enum Overlay {
     Settings(settings::Settings),
     Confirm(confirm::Confirm),
     Search(search::Search),
+    Picture(picture::Picture),
+}
+
+/// What an overlay needs from the frame around it, beyond the theme.
+///
+/// One struct rather than three more parameters: the picture overlay is the
+/// only one that wants any of it, and a signature that grows every time an
+/// overlay learns something new is a signature every call site has to be
+/// edited for.
+pub struct Around<'a> {
+    pub cfg: &'a Config,
+    /// What the core knows about the open article's pictures.
+    pub pictures: &'a HashMap<String, PictureState>,
+    /// How big a cell is, where the terminal measured one. `None` means
+    /// there is no honest pixel count, and nothing is grown.
+    pub cell: Option<(u16, u16)>,
 }
 
 /// Modal things drawn over everything else. See the module doc for the one
@@ -70,6 +90,11 @@ pub enum Overlay {
 #[derive(Debug, Default)]
 pub struct Overlays {
     current: Option<Overlay>,
+    /// What the last render placed, for the caller's own drawing pass. An
+    /// overlay's picture goes down *after* its chrome -- a `Clear` wipes the
+    /// cells a protocol image lives in -- so it cannot be drawn from inside
+    /// `render`.
+    placed: Option<picture::Placed>,
 }
 
 /// What handling a key or a click did.
@@ -93,6 +118,10 @@ pub enum Answer {
     ImportOpml(PathBuf),
     /// `n` on the import offer: no, and never ask again.
     DismissImport,
+    /// `o` in the picture overlay: hand it to whatever shows pictures.
+    OpenPicture(String),
+    /// `y` in the picture overlay: its address, for the clipboard.
+    CopyUrl(String),
     /// A settings row was stepped; `true` is forward.
     Setting(settings::Setting, bool),
     /// `ctrl+c`, which quits from inside an overlay the same as everywhere
@@ -102,7 +131,10 @@ pub enum Answer {
 
 impl Overlays {
     pub fn new() -> Self {
-        Self { current: None }
+        Self {
+            current: None,
+            placed: None,
+        }
     }
 
     /// Checked first by both the key and the mouse dispatch, so a key or a
@@ -146,6 +178,23 @@ impl Overlays {
 
     pub fn open_search(&mut self, query: &str) {
         self.current = Some(Overlay::Search(search::Search::with(query)));
+    }
+
+    /// The picture overlay, on the one that was clicked. Nothing opens when
+    /// the article has no pictures, which is a click that cannot happen.
+    pub fn open_picture(&mut self, items: Vec<picture::Shown>, index: usize) -> bool {
+        match picture::Picture::new(items, index) {
+            Some(p) => {
+                self.current = Some(Overlay::Picture(p));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// What the last render placed, taken so it is drawn once.
+    pub fn take_placed(&mut self) -> Option<picture::Placed> {
+        self.placed.take()
     }
 
     pub fn close(&mut self) {
@@ -266,6 +315,14 @@ impl Overlays {
                 search::Action::Close => (true, Answer::Closed),
                 search::Action::Submit(q) => (true, Answer::Search(q)),
             },
+            // Stays open on `o` and `y`: looking at a picture, opening it
+            // and copying its address are one visit rather than three.
+            Overlay::Picture(p) => match p.handle(k) {
+                picture::Action::Taken => (false, Answer::Consumed),
+                picture::Action::Close => (true, Answer::Closed),
+                picture::Action::Open(url) => (false, Answer::OpenPicture(url)),
+                picture::Action::Copy(url) => (false, Answer::CopyUrl(url)),
+            },
         };
         if close {
             self.current = None;
@@ -332,6 +389,13 @@ impl Overlays {
                     (true, Answer::Closed)
                 }
             }
+            Overlay::Picture(_) => {
+                if inside(picture::rect(area), x, y) {
+                    (false, Answer::Consumed)
+                } else {
+                    (true, Answer::Closed)
+                }
+            }
         };
         if close {
             self.current = None;
@@ -364,9 +428,11 @@ impl Overlays {
         area: Rect,
         buf: &mut Buffer,
         theme: &Theme,
-        cfg: &Config,
+        around: &Around<'_>,
         _bars: &mut Bars,
     ) -> Option<(u16, u16)> {
+        let cfg = around.cfg;
+        self.placed = None;
         match self.current.as_mut()? {
             Overlay::Help { scroll } => {
                 // `HelpView` takes STAR/KIT's own `Theme`, which this crate's
@@ -394,6 +460,10 @@ impl Overlays {
                 None
             }
             Overlay::Search(s) => search::render(area, buf, theme, s),
+            Overlay::Picture(p) => {
+                self.placed = picture::render(area, buf, theme, p, around.pictures, around.cell);
+                None
+            }
         }
     }
 }
@@ -420,6 +490,16 @@ mod tests {
         KeyEvent::new(c, KeyModifiers::NONE)
     }
 
+    fn around(cfg: &Config) -> Around<'_> {
+        static NOTHING: std::sync::LazyLock<HashMap<String, PictureState>> =
+            std::sync::LazyLock::new(HashMap::new);
+        Around {
+            cfg,
+            pictures: &NOTHING,
+            cell: None,
+        }
+    }
+
     fn a_probe() -> import::Probe {
         import::Probe {
             path: PathBuf::from("/home/somebody/.config/newsboat/urls"),
@@ -437,6 +517,15 @@ mod tests {
             |o: &mut Overlays| o.open_settings(),
             |o: &mut Overlays| o.open_confirm(confirm::Confirm::remove_feed(FeedId(1), "Lobsters")),
             |o: &mut Overlays| o.open_search("lifetimes"),
+            |o: &mut Overlays| {
+                o.open_picture(
+                    vec![picture::Shown {
+                        url: "https://e.org/one.png".into(),
+                        alt: "a diagram".into(),
+                    }],
+                    0,
+                );
+            },
         ]
     }
 
@@ -624,12 +713,24 @@ mod tests {
                 "REMOVE THE FEED",
             ),
             (|o: &mut Overlays| o.open_search("x"), "SEARCH"),
+            (
+                |o: &mut Overlays| {
+                    o.open_picture(
+                        vec![picture::Shown {
+                            url: "https://e.org/one.png".into(),
+                            alt: "a diagram".into(),
+                        }],
+                        0,
+                    );
+                },
+                "PICTURE",
+            ),
         ] {
             for area in [Rect::new(0, 0, 60, 21), Rect::new(0, 0, 200, 60)] {
                 let mut o = Overlays::new();
                 open(&mut o);
                 let mut buf = Buffer::empty(area);
-                o.render(area, &mut buf, &t, &cfg, &mut Bars::new());
+                o.render(area, &mut buf, &t, &around(&cfg), &mut Bars::new());
                 let text: String = (0..area.height)
                     .map(|y| {
                         (0..area.width)
@@ -650,7 +751,7 @@ mod tests {
         let area = Rect::new(0, 0, 60, 21);
         let mut buf = Buffer::empty(area);
         let before = buf.clone();
-        let cursor = Overlays::new().render(area, &mut buf, &t, &cfg, &mut Bars::new());
+        let cursor = Overlays::new().render(area, &mut buf, &t, &around(&cfg), &mut Bars::new());
         assert_eq!(buf, before);
         assert_eq!(cursor, None);
     }
@@ -699,13 +800,14 @@ mod tests {
         }
 
         fn open_nth(o: &mut Overlays, n: usize) {
-            every_overlay()[n % 6](o);
+            let openers = every_overlay();
+            openers[n % openers.len()](o);
         }
 
         proptest! {
             #[test]
             fn random_keys_never_panic_whichever_overlay_is_open(
-                opener in 0..6usize,
+                opener in 0..7usize,
                 keys in proptest::collection::vec(arb_key(), 0..60),
             ) {
                 let mut o = Overlays::new();
@@ -722,7 +824,7 @@ mod tests {
             /// or closes the box -- never a panic and never a hang.
             #[test]
             fn random_clicks_never_panic(
-                opener in 0..6usize,
+                opener in 0..7usize,
                 x in 0..100u16,
                 y in 0..30u16,
             ) {

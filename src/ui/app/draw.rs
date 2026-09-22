@@ -90,7 +90,7 @@ impl App {
             let v = self.reader_view(rendered.clone());
             reader::render(reader_rect, buf, &v, &mut bars);
         }
-        let drawn = self.paint_pictures(reader_rect, rendered, buf);
+        let mut drawn = self.paint_pictures(reader_rect, rendered, buf);
 
         status::render(regions.status, buf, &self.status_view(Instant::now()));
 
@@ -104,11 +104,42 @@ impl App {
         let cursor = {
             let theme = self.theme.clone();
             let cfg = self.cfg.clone();
-            self.overlays
-                .render(regions.area, buf, &theme, &cfg, &mut bars)
+            // Taken out for the length of the render: the overlay is
+            // handed what the core knows about the pictures, and `self` is
+            // borrowed mutably to draw.
+            let pictures = std::mem::take(&mut self.view.pictures);
+            let around = crate::ui::overlays::Around {
+                cfg: &cfg,
+                pictures: &pictures,
+                cell: self.graphics.cell_size(),
+            };
+            let cursor = self
+                .overlays
+                .render(regions.area, buf, &theme, &around, &mut bars);
+            self.view.pictures = pictures;
+            cursor
         };
         if let Some((x, y)) = cursor {
             reverse_cell(buf, regions.area, x, y);
+        }
+        // The overlay's own picture, after its chrome and in a pass of its
+        // own: a `Clear` wipes the cells a protocol image lives in, so the
+        // panels' pictures have to be down before this one and this one
+        // after.
+        if let Some(placed) = self.overlays.take_placed() {
+            if let Some(stale) = placed.stale {
+                self.graphics.forget(stale);
+            }
+            if pictures::draw_one(
+                &mut self.graphics,
+                placed.id,
+                &placed.image,
+                placed.rect,
+                false,
+                buf,
+            ) {
+                drawn.insert(placed.id);
+            }
         }
 
         // Whatever is not on the screen is not worth the terminal's memory,

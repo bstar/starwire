@@ -46,6 +46,14 @@ pub const REFRESHES: &[u32] = &[15, 30, 60, 120, 0];
 /// it on; the rest are for a terminal that lies about itself.
 pub const GRAPHICS: &[&str] = &["auto", "kitty", "blocks", "off"];
 
+/// The caps one picture can be given, and `0`, which is a third of the
+/// reader and is what the row shows as `auto`.
+pub const IMAGE_ROWS: &[u16] = &[0, 8, 12, 16, 24];
+
+/// What a click on a picture can do. `auto` is the overlay on a session
+/// with no display of its own and the desktop's own viewer otherwise.
+pub const CLICKS: &[&str] = &["auto", "viewer", "external"];
+
 /// One thing the overlay can change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
@@ -56,6 +64,9 @@ pub enum Setting {
     Extract,
     RefreshEvery,
     Graphics,
+    Pictures,
+    PictureRows,
+    ClickPicture,
 }
 
 impl Setting {
@@ -70,6 +81,9 @@ impl Setting {
         Setting::Extract,
         Setting::RefreshEvery,
         Setting::Graphics,
+        Setting::Pictures,
+        Setting::PictureRows,
+        Setting::ClickPicture,
     ];
 
     pub fn label(self) -> &'static str {
@@ -81,6 +95,9 @@ impl Setting {
             Setting::Extract => "extract articles",
             Setting::RefreshEvery => "refresh every",
             Setting::Graphics => "graphics",
+            Setting::Pictures => "pictures",
+            Setting::PictureRows => "picture rows",
+            Setting::ClickPicture => "click a picture",
         }
     }
 
@@ -94,6 +111,9 @@ impl Setting {
             Setting::Extract => ("articles", "extract"),
             Setting::RefreshEvery => ("fetch", "refresh_minutes"),
             Setting::Graphics => ("ui", "graphics"),
+            Setting::Pictures => ("articles", "images"),
+            Setting::PictureRows => ("reading", "image_rows"),
+            Setting::ClickPicture => ("reading", "click_picture"),
         }
     }
 
@@ -110,6 +130,12 @@ impl Setting {
                 n => format!("{n} min"),
             },
             Setting::Graphics => cfg.ui.graphics.clone(),
+            Setting::Pictures => on_off(cfg.articles.images).into(),
+            Setting::PictureRows => match cfg.reading.image_rows {
+                0 => "auto".into(),
+                n => n.to_string(),
+            },
+            Setting::ClickPicture => cfg.reading.click_picture.clone(),
         }
     }
 
@@ -160,6 +186,26 @@ impl Setting {
                     .unwrap_or("auto")
                     .to_string();
                 cfg.ui.graphics = next.clone();
+                Value::Str(next)
+            }
+            Setting::Pictures => {
+                cfg.articles.images = !cfg.articles.images;
+                Value::Bool(cfg.articles.images)
+            }
+            Setting::PictureRows => {
+                let next = cycle_by(IMAGE_ROWS, &cfg.reading.image_rows, forward)
+                    .copied()
+                    .unwrap_or(cfg.reading.image_rows);
+                cfg.reading.image_rows = next;
+                Value::Int(i64::from(next))
+            }
+            Setting::ClickPicture => {
+                let current = cfg.reading.click_picture.as_str();
+                let next = cycle_by(CLICKS, &current, forward)
+                    .copied()
+                    .unwrap_or("auto")
+                    .to_string();
+                cfg.reading.click_picture = next.clone();
                 Value::Str(next)
             }
         }

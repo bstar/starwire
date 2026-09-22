@@ -101,6 +101,10 @@ pub struct App {
     /// render cache is a miss at once -- see `markdown::cache::Key`.
     theme_gen: u64,
     graphics: Graphics,
+    /// Whether this session has a display of its own. Asked once, at
+    /// startup, because the environment a program was started with is the
+    /// environment it keeps -- see [`remote_session`].
+    remote: bool,
     /// Bumped whenever anything the reader's pictures depend on moved --
     /// one arrived, the cell size changed under a font zoom, the graphics
     /// mode changed, the cap changed, they were turned off. Part of the
@@ -214,6 +218,7 @@ impl App {
             theme_name,
             theme_gen: 0,
             graphics,
+            remote: remote_session(|name| std::env::var(name).ok()),
             pictures_gen: 0,
             seen_pictures_version: u64::MAX,
             last_cell: None,
@@ -1378,6 +1383,23 @@ impl App {
             }
             S::ReadingWidth | S::Byline => self.repaint = true,
             S::MarkReadOnOpen => {}
+            S::Pictures => {
+                self.core.send(Command::SetSetting(Setting::Images(
+                    self.cfg.articles.images,
+                )));
+                // Every laid-out article in the cache reserved rows -- or
+                // drew the alt line -- against the answer that has just
+                // changed.
+                self.pictures_gen += 1;
+                self.repaint = true;
+            }
+            S::PictureRows => {
+                self.pictures_gen += 1;
+                self.repaint = true;
+            }
+            // Nothing running changes: it is read when a picture is
+            // clicked.
+            S::ClickPicture => {}
             S::Extract => self.core.send(Command::SetSetting(Setting::Extract(
                 self.cfg.articles.extract,
             ))),
@@ -1434,6 +1456,11 @@ impl App {
                 self.say("importing");
             }
             A::DismissImport => self.core.send(Command::DismissImportOffer),
+            A::OpenPicture(url) => self.open_picture(url),
+            A::CopyUrl(url) => match super::clipboard::copy(&url) {
+                Ok(()) => self.say("link copied"),
+                Err(e) => self.warn(format!("no clipboard: {e}")),
+            },
             A::Setting(setting, forward) => {
                 let themes = theme::registry().selectable();
                 let value = setting.step(&mut self.cfg, forward, &themes);
@@ -1450,6 +1477,41 @@ impl App {
     }
 
     // -- the reader's text --------------------------------------------------
+
+    /// Hand a picture to whatever shows pictures.
+    pub(super) fn open_picture(&mut self, url: String) {
+        self.core.send(Command::OpenPicture(url));
+        self.say("opening picture");
+    }
+
+    /// What a click on a picture does: the overlay, or the desktop.
+    ///
+    /// `auto` is the reason this is a rule and not a setting most people
+    /// will ever touch. A session with no display of its own has nowhere
+    /// for an image viewer to open -- over ssh it opens on the far machine,
+    /// which is not the one the reader is sitting at -- and the overlay is
+    /// the only way of seeing a picture properly there.
+    pub(super) fn picture_opens_here(&self) -> bool {
+        match self.cfg.reading.click_picture.trim() {
+            "viewer" => true,
+            "external" => false,
+            _ => self.remote,
+        }
+    }
+
+    /// A click on the article's `i`th picture.
+    pub(super) fn open_picture_at(&mut self, i: usize, pictures: &[overlays::picture::Shown]) {
+        let Some(url) = pictures.get(i).map(|p| p.url.clone()) else {
+            return;
+        };
+        if self.picture_opens_here() {
+            if self.overlays.open_picture(pictures.to_vec(), i) {
+                self.repaint = true;
+            }
+            return;
+        }
+        self.open_picture(url);
+    }
 
     /// Whether this article's pictures are drawn at all.
     ///
@@ -1633,10 +1695,61 @@ impl App {
         }
     }
 
+    /// Open the picture overlay on the open article's `n`th picture, the
+    /// way a click on it does.
+    #[cfg(test)]
+    pub(crate) fn open_picture_for_tests(&mut self, n: usize) {
+        let regions = self.layout.last.clone().expect("a frame has been drawn");
+        let rect = regions.rect_of(ModuleId::Reader);
+        let body = starkit::chrome::header::body(rect);
+        let cols = super::panels::reader::text_cols(body.width, self.cfg.reading.width);
+        let cap_rows = self.cap_rows(body.height);
+        let shown: Vec<overlays::picture::Shown> = self
+            .rendered(cols, cap_rows)
+            .map(|r| {
+                r.pictures
+                    .iter()
+                    .map(|p| overlays::picture::Shown {
+                        url: p.url.clone(),
+                        alt: p.alt.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(!shown.is_empty(), "the open article has no pictures");
+        assert!(
+            self.overlays.open_picture(shown, n),
+            "the overlay did not open"
+        );
+    }
+
     #[cfg(test)]
     pub(crate) fn note_text(&self) -> Option<&str> {
         self.note.as_ref().map(|(t, _, _)| t.as_str())
     }
+}
+
+/// Whether this session has no display of its own.
+///
+/// Read once, at startup, because it cannot change under a running process.
+/// The same rule STAR/CORD's media viewer uses, deliberately: the two
+/// applications are run side by side in the same terminals, and a click on a
+/// picture that opened a viewer in one and a window on another machine in
+/// the other would be indefensible.
+///
+/// Two answers, in order. An ssh session says so itself, and says it whether
+/// or not a display is forwarded -- `xdg-open` at that end reaches the far
+/// machine's desktop either way, which is not the one the reader is sitting
+/// at. Otherwise, on Linux, a session with neither an X display nor a
+/// Wayland one has nothing for an opener to draw on at all: a bare tty, a
+/// container, a serial console. macOS has no such variable and needs none,
+/// since `open` there always has a session to reach.
+fn remote_session(env: impl Fn(&str) -> Option<String>) -> bool {
+    let set = |name: &str| env(name).is_some_and(|value| !value.is_empty());
+    if set("SSH_CONNECTION") || set("SSH_TTY") {
+        return true;
+    }
+    cfg!(target_os = "linux") && !set("DISPLAY") && !set("WAYLAND_DISPLAY")
 }
 
 /// What the layout is told about one picture.
@@ -2318,6 +2431,90 @@ mod tests {
         }
         assert_eq!(app.last_open_feed, sent);
         assert_eq!(app.core.state().version, version, "nothing was re-sent");
+    }
+
+    /// A session with nowhere of its own to draw, in the two ways it says
+    /// so. The same rule STAR/CORD's media viewer uses, and the same test,
+    /// because a click on a picture has to mean the same thing in both.
+    #[test]
+    fn a_session_with_no_display_of_its_own_says_so() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| (*value).to_string())
+            }
+        };
+
+        // An ssh session says so itself, display forwarded or not: the
+        // opener at that end reaches the far machine's desktop either way.
+        assert!(remote_session(env(&[(
+            "SSH_CONNECTION",
+            "10.0.0.2 55000 10.0.0.1 22"
+        )])));
+        assert!(remote_session(env(&[("SSH_TTY", "/dev/pts/3")])));
+        assert!(remote_session(env(&[
+            ("SSH_CONNECTION", "10.0.0.2 55000 10.0.0.1 22"),
+            ("DISPLAY", ":10.0"),
+        ])));
+
+        // A desktop session does not. On macOS neither variable exists and
+        // `open` always has somewhere to go, so the answer there is the same
+        // with none of them set.
+        assert!(!remote_session(env(&[("DISPLAY", ":0")])));
+        assert!(!remote_session(env(&[("WAYLAND_DISPLAY", "wayland-0")])));
+        assert_eq!(
+            remote_session(env(&[])),
+            cfg!(target_os = "linux"),
+            "a Linux session with no display at all has nowhere to draw; macOS has"
+        );
+
+        // Set and empty is not set: a shell that exports a variable it never
+        // filled in is every login script.
+        assert!(!remote_session(env(&[("SSH_TTY", ""), ("DISPLAY", ":0")])));
+    }
+
+    /// Which of the two a click opens, and that `[reading] click_picture`
+    /// overrules the guess in both directions.
+    #[test]
+    fn a_click_on_a_picture_opens_the_overlay_only_where_there_is_nowhere_else() {
+        let (mut app, _fk, _dir) = app();
+
+        app.remote = true;
+        assert!(app.picture_opens_here(), "over ssh, the overlay");
+        app.remote = false;
+        assert!(!app.picture_opens_here(), "at a desktop, the desktop");
+
+        app.cfg.reading.click_picture = "viewer".into();
+        assert!(app.picture_opens_here());
+        app.cfg.reading.click_picture = "external".into();
+        assert!(!app.picture_opens_here());
+        app.remote = true;
+        assert!(!app.picture_opens_here(), "asked for, and honoured");
+
+        // And the overlay really opens on the picture that was clicked.
+        app.cfg.reading.click_picture = "viewer".into();
+        let shown = vec![
+            overlays::picture::Shown {
+                url: "https://e.org/one.png".into(),
+                alt: "one".into(),
+            },
+            overlays::picture::Shown {
+                url: "https://e.org/two.png".into(),
+                alt: "two".into(),
+            },
+        ];
+        app.open_picture_at(1, &shown);
+        match app.overlays.current() {
+            Some(Overlay::Picture(p)) => assert_eq!(p.current().url, "https://e.org/two.png"),
+            other => panic!("the overlay is {other:?}"),
+        }
+
+        // Nothing at that index is nothing at all, rather than a panic.
+        app.overlays.close();
+        app.open_picture_at(9, &shown);
+        assert!(!app.overlays.is_open());
     }
 
     /// Quitting writes the source, the entry and the position, and the next

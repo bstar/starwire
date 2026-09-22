@@ -144,6 +144,7 @@ _everywhere_
 | entries  | right-click           | star it |
 | lists    | click a crumb         | jump there |
 | reader   | click a link          | open it |
+| reader   | click a picture       | open it |
 | lists    | wheel                 | scroll three rows |
 | modules  | click a fold          | open the module |
 | modules  | click a word          | what it says |

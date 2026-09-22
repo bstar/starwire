@@ -13,15 +13,15 @@ expression: "render(&mut app, 100, 30)"
 ║▸ Tech   ║  up/k          up one               click a crumb        jump there          ║       3 ║
 ║▸ YouTube║  down/j        down one             reader                                   ║       1 ║
 ║  Phoroni║  shift+up/K    up ten               click a link         open it             ║       1 ║
-║         ║  shift+down/J  down ten             lists                                    ║         ║
-║         ║  pgup          page up              wheel                scroll three rows   ║         ║
-║         ║  pgdn          page down            modules                                  ║         ║
-║         ║  home/gg       to the top           click a fold         open the module     ║         ║
-║         ║  end/G         to the bottom        click a word         what it says        ║         ║
-║         ║  enter         open it              drag the bar         scroll it           ║         ║
-║         ║  esc           cancel               status                                   ║         ║
-║         ║  l/right       drill in             click the count      to the sources      ║         ║
-║         ║  h/left/bs     back one level                                                ║         ║
+║         ║  shift+down/J  down ten             click a picture      open it             ║         ║
+║         ║  pgup          page up              lists                                    ║         ║
+║         ║  pgdn          page down            wheel                scroll three rows   ║         ║
+║         ║  home/gg       to the top           modules                                  ║         ║
+║         ║  end/G         to the bottom        click a fold         open the module     ║         ║
+║         ║  enter         open it              click a word         what it says        ║         ║
+║         ║  esc           cancel               drag the bar         scroll it           ║         ║
+║         ║  l/right       drill in             status                                   ║         ║
+║         ║  h/left/bs     back one level       click the count      to the sources      ║         ║
 ╚═════════║  alt+up        jump to the parent                                            ║═════════╝
 ╔═ ENTRIES║  alt+down      jump back down                                                ║═════════╗
 ║         ║  alt+f         search everything                                             ║  filter ║

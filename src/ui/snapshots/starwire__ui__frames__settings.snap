@@ -10,20 +10,20 @@ expression: "render(&mut app, 100, 30)"
 ║★ Starred                                                                                         ║
 ║▶ Videos                                                                                          ║
 ║⌕ Search…                                                                                         ║
-║▸ Tech                                                                                          3 ║
-║▸ YouTube              ╔═ SETTINGS ═══════════════════════════════════════╗                     1 ║
-║  Phoronix             ║the window                                        ║                     1 ║
-║                       ║ theme                                   terminal ║                       ║
+║▸ Tech                 ╔═ SETTINGS ═══════════════════════════════════════╗                     3 ║
+║▸ YouTube              ║the window                                        ║                     1 ║
+║  Phoronix             ║ theme                                   terminal ║                     1 ║
 ║                       ║ reading width                                 80 ║                       ║
 ║                       ║ byline                                        on ║                       ║
 ║                       ║ mark read on open                             on ║                       ║
 ║                       ║ extract articles                              on ║                       ║
 ║                       ║ refresh every                             15 min ║                       ║
 ║                       ║ graphics                                    auto ║                       ║
-║                       ║                                                  ║                       ║
-║                       ╚════════════════════════ enter change · esc close ╝                       ║
-╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
-╔═ ENTRIES ════════════════════════════════════════════════════════════════════════════════════════╗
+║                       ║ pictures                                      on ║                       ║
+║                       ║ picture rows                                auto ║                       ║
+║                       ║ click a picture                             auto ║                       ║
+╚═══════════════════════║                                                  ║═══════════════════════╝
+╔═ ENTRIES ═════════════╚════════════════════════ enter change · esc close ╝═══════════════════════╗
 ║                                                                                ‹  unread  filter ║
 ║▸ choose a source                                                                                 ║
 ╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
