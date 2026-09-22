@@ -32,12 +32,16 @@
 //!
 //! ## Pictures
 //!
-//! There are none in 0.0.1 -- see `docs/status.md`. An image becomes a
-//! [`Block::Image`] carrying its alt text, which the layout draws as one
-//! `[image: alt]` line, and an image in the middle of a paragraph splits
-//! that paragraph in two rather than being reordered around. Inside a
-//! heading or a table cell, where a block cannot go, it becomes that same
-//! text inline.
+//! An image becomes a [`Block::Image`] carrying **both** its alt text and
+//! the address it is at, and an image in the middle of a paragraph splits
+//! that paragraph in two rather than being reordered around it. Inside a
+//! heading or a table cell, where a block cannot go, it becomes the
+//! `[image: alt]` text inline and the address is dropped -- there is no row
+//! to put a picture on there.
+//!
+//! An image is never a numbered link, even where the markdown wraps one in a
+//! link: the numbers are for things `o<n>` opens in a browser, and a picture
+//! is opened by clicking it.
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
@@ -85,8 +89,11 @@ pub enum Block {
         header: Vec<Vec<Inline>>,
         rows: Vec<Vec<Vec<Inline>>>,
     },
-    /// A picture's alt text. See the module doc.
-    Image(String),
+    /// A picture: what it is of, and where it is. See the module doc.
+    Image {
+        alt: String,
+        url: String,
+    },
 }
 
 /// A run of text and how it is drawn.
@@ -161,8 +168,9 @@ struct Builder {
     heading: Option<u8>,
     /// `Some` while a fenced or indented code block is open.
     code: Option<(Option<String>, String)>,
-    /// `Some` while an image's alt text is being collected.
-    image: Option<String>,
+    /// `Some` while an image is open: where it is, and the alt text being
+    /// collected for it.
+    image: Option<(String, String)>,
     /// The label of the footnote definition being collected, if any.
     footnote: Vec<String>,
     bold: u32,
@@ -234,7 +242,7 @@ impl Builder {
         if text.is_empty() {
             return;
         }
-        if let Some(alt) = self.image.as_mut() {
+        if let Some((_, alt)) = self.image.as_mut() {
             alt.push_str(text);
             return;
         }
@@ -351,7 +359,7 @@ impl Builder {
                 // without one.
                 self.link = u16::try_from(self.links.len()).ok();
             }
-            Tag::Image { .. } => self.image = Some(String::new()),
+            Tag::Image { dest_url, .. } => self.image = Some((dest_url.to_string(), String::new())),
             // Not enabled, and listed so that enabling one is a change here.
             Tag::HtmlBlock
             | Tag::MetadataBlock(_)
@@ -467,7 +475,7 @@ impl Builder {
             TagEnd::Strikethrough => self.strike = self.strike.saturating_sub(1),
             TagEnd::Link => self.link = None,
             TagEnd::Image => {
-                let alt = self.image.take().unwrap_or_default();
+                let (url, alt) = self.image.take().unwrap_or_default();
                 let alt = alt.trim().to_string();
                 if self.heading.is_some() || self.table.is_some() {
                     // No room for a block here, so the placeholder is text.
@@ -475,7 +483,10 @@ impl Builder {
                     self.push_text(&text);
                 } else {
                     self.flush_paragraph();
-                    self.push_block(Block::Image(alt));
+                    self.push_block(Block::Image {
+                        alt,
+                        url: url.trim().to_string(),
+                    });
                 }
             }
             TagEnd::HtmlBlock
@@ -699,10 +710,55 @@ mod tests {
     #[test]
     fn an_image_is_a_block_carrying_its_alt_text() {
         let d = doc();
-        let Block::Image(alt) = find(&d, |b| matches!(b, Block::Image(_))) else {
+        let Block::Image { alt, .. } = find(&d, |b| matches!(b, Block::Image { .. })) else {
             unreachable!()
         };
         assert_eq!(alt, "a borrow checker diagram");
+    }
+
+    /// The address is what the reader fetches, so it has to survive the
+    /// parse -- and a picture inside a link is still a picture rather than
+    /// link number three.
+    #[test]
+    fn an_image_keeps_its_url_and_takes_no_link_number() {
+        let d = parse("![a diagram](https://e.org/pictures/one.png)");
+        assert_eq!(
+            d.blocks,
+            vec![Block::Image {
+                alt: "a diagram".into(),
+                url: "https://e.org/pictures/one.png".into(),
+            }]
+        );
+
+        // Wrapped in a link, as a thumbnail on a news site is. The picture
+        // carries no number: `o<n>` is for what a browser opens, and this
+        // one is opened by clicking it.
+        let d = parse("[![a diagram](https://e.org/one.png)](https://e.org/full)");
+        assert_eq!(
+            d.blocks,
+            vec![Block::Image {
+                alt: "a diagram".into(),
+                url: "https://e.org/one.png".into(),
+            }]
+        );
+        assert!(
+            !d.blocks.iter().any(|b| matches!(
+                b,
+                Block::Paragraph(i) if i.iter().any(|r| r.style.link.is_some())
+            )),
+            "{:?}",
+            d.blocks
+        );
+
+        // And one with nothing to say about itself still has an address.
+        let d = parse("![](https://e.org/decorative.png)");
+        assert_eq!(
+            d.blocks,
+            vec![Block::Image {
+                alt: String::new(),
+                url: "https://e.org/decorative.png".into(),
+            }]
+        );
     }
 
     /// An image in the middle of a paragraph splits it rather than being
@@ -716,7 +772,13 @@ mod tests {
             panic!("{:?}", d.blocks[0]);
         };
         assert_eq!(text_of(first), "before ");
-        assert_eq!(d.blocks[1], Block::Image("alt".into()));
+        assert_eq!(
+            d.blocks[1],
+            Block::Image {
+                alt: "alt".into(),
+                url: "p.png".into(),
+            }
+        );
         let Block::Paragraph(last) = &d.blocks[2] else {
             panic!("{:?}", d.blocks[2]);
         };
@@ -822,7 +884,7 @@ mod tests {
                         }
                         all
                     }
-                    Block::Code { .. } | Block::Rule | Block::Image(_) => vec![],
+                    Block::Code { .. } | Block::Rule | Block::Image { .. } => vec![],
                 };
                 for inlines in inline_sets {
                     for i in inlines {

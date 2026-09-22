@@ -2135,10 +2135,6 @@ mod tests {
         assert_eq!(s.version, before + 1);
     }
 
-    /// The rule the module doc states, kept the way STAR/FOLD keeps it: by
-    /// grepping this file's own source. `apply` runs under the one write
-    /// lock, and a query or a request in here would hold it for the length
-    /// of a round trip.
     // ------------------------------------------------------- pictures ----
 
     fn picture(path: Option<&str>) -> Arc<Picture> {
@@ -2390,6 +2386,10 @@ mod tests {
         );
     }
 
+    /// The rule the module doc states, kept the way STAR/FOLD keeps it: by
+    /// grepping this file's own source. `apply` runs under the one write
+    /// lock, and a query or a request in here would hold it for the length
+    /// of a round trip.
     #[test]
     fn apply_does_no_io() {
         // NO-IO-HERE

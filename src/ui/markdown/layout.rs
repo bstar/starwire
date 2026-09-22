@@ -23,12 +23,32 @@
 //! | list | `• ` or `n. `, the item's blocks indented under it, two columns per level to four levels |
 //! | rule | `─` across the width, in `rule_fg` |
 //! | table | aligned columns when they fit, else one `header: cell` line per cell |
-//! | image | `[image: alt]` in `image_fg`, or `[image]` with no alt text |
+//! | image | the picture itself, where there is one; `[image: alt]` in `image_fg` otherwise |
 //!
 //! A blank line separates one block from the next. A code block is the one
 //! thing that is never reflowed: a line of code broken at a space is a line
 //! of code that no longer says what it said, so it is cut at the panel's
 //! edge instead and the reader widens with `>` if that matters.
+//!
+//! ## Pictures are rows, and nothing more
+//!
+//! This module never sees a picture. It is told how big each one turned out
+//! to be -- through [`PictureSizes`], which the panel builds from what the
+//! core has fetched -- and it reserves that many blank rows and records a
+//! [`PictureSlot`] saying where they are. A second pass over the drawn frame
+//! puts the pixels there. Keeping it that way is what lets the whole of the
+//! reader's arithmetic be tested by reading numbers rather than by looking
+//! at a terminal, and it is why a laid-out article can be cached: the rows
+//! do not move when the bytes arrive, unless the size they arrive at says
+//! they should.
+//!
+//! A picture nothing knows the size of yet reserves the *whole* box -- the
+//! full width, the full cap -- because most article pictures fill it anyway,
+//! so the common case moves no rows at all when the bytes land. One that
+//! turns out to be small shrinks its box once; one that will never arrive
+//! collapses to the `[image: alt]` line once.
+
+use std::collections::HashMap;
 
 use starkit::ratatui::style::{Modifier, Style};
 use starkit::ratatui::text::{Line, Span};
@@ -45,6 +65,80 @@ pub struct LayoutCtx<'a> {
     /// Columns of text. The panel works this out as
     /// `min([reading] width, body - 2)` and centres the result.
     pub width: u16,
+    /// What is known about this article's pictures. `None` is every reason
+    /// there might be no pictures at all -- `[articles] images` off,
+    /// `[ui] graphics = off`, a terminal with no protocol -- and lays every
+    /// image out as the `[image: alt]` line 0.0.1 drew.
+    pub pictures: Option<&'a PictureSizes<'a>>,
+}
+
+/// What the layout is told about this article's pictures.
+pub struct PictureSizes<'a> {
+    /// The most rows one picture may take: `[reading] image_rows`, or a
+    /// third of the reader's body where that is zero.
+    pub cap_rows: u16,
+    /// How many pixels a terminal cell is, width then height. `(8, 16)` is
+    /// the stand-in where nothing has measured one, which is a common font
+    /// at a common size and wrong by a little rather than by a lot.
+    pub cell: (u16, u16),
+    /// What the core has to say about each URL. A URL that is not in here
+    /// has not been asked for yet, which is laid out the same way as one
+    /// that has been asked for and not arrived.
+    pub known: &'a HashMap<String, PictureKnown>,
+}
+
+/// How far the core has got with one picture, as far as the layout cares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PictureKnown {
+    Loading,
+    Failed,
+    /// The size it turned out to be, in pixels.
+    Natural(u32, u32),
+}
+
+/// A picture's rows, and which picture they are for.
+///
+/// `row` is an index into [`Rendered::lines`] and `col` is a column inside
+/// the text, exactly like [`LinkSpan`]: the panel adds its own header rows
+/// and scroll before drawing or before answering a click.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PictureSlot {
+    pub row: u16,
+    pub col: u16,
+    pub cols: u16,
+    pub rows: u16,
+    pub url: String,
+    pub alt: String,
+}
+
+/// How many cells a picture of `natural` pixels is drawn in.
+///
+/// One image pixel per terminal pixel where it fits -- `ceil(px / cell)` in
+/// each direction, inside both the room available and the cap -- and scaled
+/// down by the tighter of the two ratios where it does not. Never up: a
+/// 160-pixel logo blown across a third of the reader is not a service.
+///
+/// `(0, 0)` means "no picture here": no cap, no room, or nothing to draw.
+pub fn box_for(natural: (u32, u32), room: u16, cap_rows: u16, cell: (u16, u16)) -> (u16, u16) {
+    let (w, h) = natural;
+    let (cw, ch) = cell;
+    if cap_rows == 0 || room == 0 || w == 0 || h == 0 || cw == 0 || ch == 0 {
+        return (0, 0);
+    }
+    let ceil = |px: u32, cell: u16| -> u32 { px.div_ceil(u32::from(cell)).max(1) };
+    let cols = ceil(w, cw);
+    let rows = ceil(h, ch);
+    if cols <= u32::from(room) && rows <= u32::from(cap_rows) {
+        return (cols as u16, rows as u16);
+    }
+    let scale = (f64::from(room) / cols as f64).min(f64::from(cap_rows) / rows as f64);
+    // Floored rather than rounded, and clamped again afterwards: a picture
+    // one column wider than the text is a picture that wraps, and a
+    // rectangle a row taller than the cap is the cap not meaning anything.
+    let fit = |n: u32, limit: u16| -> u16 {
+        (((n as f64) * scale).floor().max(1.0) as u32).min(u32::from(limit)) as u16
+    };
+    (fit(cols, room), fit(rows, cap_rows))
 }
 
 /// A run of cells that is a link, and which link it is.
@@ -66,6 +160,9 @@ pub struct LinkSpan {
 pub struct Rendered {
     pub lines: Vec<Line<'static>>,
     pub links: Vec<LinkSpan>,
+    /// Where each picture's rows are. Empty when the article has none, and
+    /// when pictures are off.
+    pub pictures: Vec<PictureSlot>,
     /// `lines.len()`, saturating. What the scrollbar measures and what
     /// `clamp_scrolls` holds the reading position under.
     pub height: u16,
@@ -82,7 +179,12 @@ impl Rendered {
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.len() + 24).sum::<usize>())
             .sum();
-        text + self.plain.len() + 96
+        let pictures: usize = self
+            .pictures
+            .iter()
+            .map(|p| p.url.len() + p.alt.len() + 48)
+            .sum();
+        text + self.plain.len() + pictures + 96
     }
 }
 
@@ -95,6 +197,7 @@ const GUTTER: u16 = 2;
 /// Lay out an article.
 pub fn layout(doc: &Doc, ctx: &LayoutCtx<'_>) -> Rendered {
     let mut w = Writer::new(ctx.theme, ctx.width, ctx.theme.row_fg);
+    w.pictures = ctx.pictures;
     w.blocks(&doc.blocks, 0);
     w.finish()
 }
@@ -119,6 +222,9 @@ struct Writer<'a> {
     /// under it is one thought, and a blank row between the two would read
     /// as two.
     tight: bool,
+    /// What is known about the pictures, passed down to every sub-writer so
+    /// a picture inside a quote or a list item is still a picture.
+    pictures: Option<&'a PictureSizes<'a>>,
 }
 
 impl<'a> Writer<'a> {
@@ -131,15 +237,27 @@ impl<'a> Writer<'a> {
             out: Rendered::default(),
             started: false,
             tight: false,
+            pictures: None,
         }
     }
 
     fn finish(mut self) -> Rendered {
-        while self
+        // A picture's rows are blank, because the pixels go over them in a
+        // second pass -- so the trailing-blank trim has to stop where the
+        // last picture ends or an article ending in one loses it.
+        let keep = self
             .out
-            .lines
-            .last()
-            .is_some_and(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
+            .pictures
+            .iter()
+            .map(|p| usize::from(p.row) + usize::from(p.rows))
+            .max()
+            .unwrap_or(0);
+        while self.out.lines.len() > keep
+            && self
+                .out
+                .lines
+                .last()
+                .is_some_and(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
         {
             self.out.lines.pop();
         }
@@ -200,20 +318,65 @@ impl<'a> Writer<'a> {
                 header,
                 rows,
             } => self.table(align, header, rows),
-            Block::Image(alt) => {
-                let style = Style::default().fg(rgb(self.theme.wire.image_fg));
-                // A picture with no alt text at all is commoner in a real
-                // article than one with any -- a decorative header image,
-                // usually -- and `[image: ]` reads as a fault where
-                // `[image]` reads as a picture nobody described.
-                let text = if alt.trim().is_empty() {
-                    "[image]".to_string()
-                } else {
-                    format!("[image: {alt}]")
-                };
-                self.emit(&[(text.clone(), style, None)], self.width, None);
-                self.say(&text);
+            Block::Image { alt, url } => self.picture(alt, url),
+        }
+    }
+
+    /// A picture: its rows and a slot, or the line that stands in for one.
+    ///
+    /// The plain text says `[image: alt]` either way. `y` copies an article
+    /// as words, and a picture is not words however it was drawn.
+    fn picture(&mut self, alt: &str, url: &str) {
+        let text = if alt.trim().is_empty() {
+            // A picture with no alt text at all is commoner in a real
+            // article than one with any -- a decorative header image,
+            // usually -- and `[image: ]` reads as a fault where `[image]`
+            // reads as a picture nobody described.
+            "[image]".to_string()
+        } else {
+            format!("[image: {alt}]")
+        };
+        let (cols, rows) = self.picture_box(url);
+        if cols == 0 || rows == 0 {
+            let style = Style::default().fg(rgb(self.theme.wire.image_fg));
+            self.emit(&[(text.clone(), style, None)], self.width, None);
+            self.say(&text);
+            return;
+        }
+        self.out.pictures.push(PictureSlot {
+            row: self.row(),
+            col: 0,
+            cols,
+            rows,
+            url: url.to_string(),
+            alt: alt.to_string(),
+        });
+        for _ in 0..rows {
+            self.blank();
+        }
+        self.say(&text);
+    }
+
+    /// How many cells this picture gets: its own shape where that is known,
+    /// the whole box while it is on its way, and nothing at all where it
+    /// failed or where there are no pictures.
+    fn picture_box(&self, url: &str) -> (u16, u16) {
+        let Some(sizes) = self.pictures else {
+            return (0, 0);
+        };
+        if url.is_empty() {
+            return (0, 0);
+        }
+        let room = self.width;
+        match sizes.known.get(url) {
+            Some(PictureKnown::Failed) => (0, 0),
+            Some(PictureKnown::Natural(w, h)) => {
+                box_for((*w, *h), room, sizes.cap_rows, sizes.cell)
             }
+            // On its way, or not asked for yet. The full box, because most
+            // article pictures fill it and the rows then do not move when
+            // the bytes land.
+            _ => (room, sizes.cap_rows),
         }
     }
 
@@ -239,6 +402,7 @@ impl<'a> Writer<'a> {
     fn quote(&mut self, inner: &[Block], depth: usize) {
         let width = self.width.saturating_sub(GUTTER).max(1);
         let mut sub = Writer::new(self.theme, width, self.theme.wire.quote_fg);
+        sub.pictures = self.pictures;
         sub.blocks(inner, depth);
         let rendered = sub.finish();
         let bar = Style::default().fg(rgb(self.theme.wire.quote_fg));
@@ -300,6 +464,7 @@ impl<'a> Writer<'a> {
             let width = self.width.saturating_sub(indent).max(1);
 
             let mut sub = Writer::new(self.theme, width, self.base_fg);
+            sub.pictures = self.pictures;
             sub.tight = true;
             sub.blocks(item, depth + 1);
             let rendered = sub.finish();
@@ -518,6 +683,11 @@ impl<'a> Writer<'a> {
             span.col += indent;
             self.out.links.push(span);
         }
+        for mut slot in rendered.pictures {
+            slot.row += offset;
+            slot.col += indent;
+            self.out.pictures.push(slot);
+        }
         self.out.plain.push_str(&rendered.plain);
         self.out.plain.push('\n');
     }
@@ -541,6 +711,11 @@ impl<'a> Writer<'a> {
             span.row += offset;
             span.col += indent;
             self.out.links.push(span);
+        }
+        for mut slot in rendered.pictures {
+            slot.row += offset;
+            slot.col += indent;
+            self.out.pictures.push(slot);
         }
         self.out.plain.push_str(&rendered.plain);
         self.out.plain.push('\n');
@@ -659,6 +834,7 @@ mod tests {
             &LayoutCtx {
                 theme: &theme,
                 width,
+                pictures: None,
             },
         )
     }
@@ -892,6 +1068,190 @@ mod tests {
         assert_eq!(r.lines[0].spans[0].style.fg, Some(rgb(t.wire.image_fg)));
     }
 
+    // ------------------------------------------------------ pictures ----
+
+    fn sizes<'a>(known: &'a HashMap<String, PictureKnown>, cap_rows: u16) -> PictureSizes<'a> {
+        PictureSizes {
+            cap_rows,
+            cell: (8, 16),
+            known,
+        }
+    }
+
+    fn with_pictures(md: &str, width: u16, sizes: &PictureSizes<'_>) -> Rendered {
+        let theme = theme("catppuccin-mocha");
+        layout(
+            &parse(md),
+            &LayoutCtx {
+                theme: &theme,
+                width,
+                pictures: Some(sizes),
+            },
+        )
+    }
+
+    /// The whole of the sizing rule, at a cell of eight by sixteen -- which
+    /// is a common font at a common size, and the stand-in used where a
+    /// terminal never measured one.
+    #[test]
+    fn a_picture_takes_its_own_cells_until_it_cannot() {
+        let cell = (8, 16);
+        // 64x32 pixels is exactly eight columns and two rows.
+        assert_eq!(box_for((64, 32), 80, 12, cell), (8, 2));
+        // A pixel over is another cell: the rectangle has to cover it.
+        assert_eq!(box_for((65, 33), 80, 12, cell), (9, 3));
+
+        // A banner, wider than the text: fitted to the width, and the rows
+        // follow it down.
+        assert_eq!(box_for((1600, 100), 80, 12, cell), (80, 2));
+        // A tall one: the cap binds, and the columns follow it in.
+        assert_eq!(box_for((800, 1600), 80, 12, cell), (12, 12));
+        // A photograph wide enough to want more rows than the cap allows:
+        // the cap is what binds, not the width.
+        assert_eq!(box_for((1600, 800), 80, 12, cell), (48, 12));
+        // Whichever binds, neither bound is ever exceeded.
+        for natural in [(4000, 4000), (9000, 40), (40, 9000), (1, 1)] {
+            let (cols, rows) = box_for(natural, 80, 12, cell);
+            assert!(cols <= 80 && rows <= 12, "{natural:?}: {cols}x{rows}");
+            assert!(cols >= 1 && rows >= 1, "{natural:?}: {cols}x{rows}");
+        }
+
+        // Never up. A small picture keeps its own size however much room
+        // there is.
+        assert_eq!(box_for((16, 16), 200, 40, cell), (2, 1));
+
+        // And nothing at all where there is nowhere to put one.
+        assert_eq!(box_for((64, 32), 80, 0, cell), (0, 0), "no cap");
+        assert_eq!(box_for((64, 32), 0, 12, cell), (0, 0), "no room");
+        assert_eq!(box_for((0, 0), 80, 12, cell), (0, 0), "no picture");
+        assert_eq!(box_for((64, 32), 80, 12, (0, 0)), (0, 0), "no cell");
+    }
+
+    /// A picture whose size is known gets exactly those rows, and the slot
+    /// says where they are. The plain text still says `[image: alt]`,
+    /// because `y` copies words and a picture is not words.
+    #[test]
+    fn a_known_picture_reserves_its_own_rows() {
+        let mut known = HashMap::new();
+        known.insert("p.png".to_string(), PictureKnown::Natural(64, 32));
+        let r = with_pictures(
+            "one
+
+![a diagram](p.png)
+
+two
+",
+            40,
+            &sizes(&known, 12),
+        );
+
+        assert_eq!(r.pictures.len(), 1);
+        let slot = &r.pictures[0];
+        assert_eq!((slot.cols, slot.rows), (8, 2));
+        assert_eq!(slot.col, 0, "at the left edge of the text");
+        assert_eq!(slot.url, "p.png");
+        assert_eq!(slot.alt, "a diagram");
+        assert_eq!(drawn(&r)[slot.row as usize], "", "its rows are blank");
+        assert_eq!(
+            drawn(&r)[usize::from(slot.row) + usize::from(slot.rows) - 1],
+            ""
+        );
+        assert_eq!(
+            r.plain,
+            "one
+[image: a diagram]
+two"
+        );
+    }
+
+    /// Before anything is known a picture takes the whole box, so the rows
+    /// do not move when the bytes land at the size most of them land at.
+    #[test]
+    fn a_loading_picture_reserves_the_whole_box() {
+        let mut known = HashMap::new();
+        let r = with_pictures(
+            "![a](p.png)
+",
+            40,
+            &sizes(&known, 9),
+        );
+        assert_eq!(r.pictures.len(), 1);
+        assert_eq!((r.pictures[0].cols, r.pictures[0].rows), (40, 9));
+        assert_eq!(r.height, 9, "nine blank rows, and the trim left them");
+
+        // Explicitly loading is the same answer as never asked for.
+        known.insert("p.png".to_string(), PictureKnown::Loading);
+        let again = with_pictures(
+            "![a](p.png)
+",
+            40,
+            &sizes(&known, 9),
+        );
+        assert_eq!(again.pictures, r.pictures);
+    }
+
+    /// One that will never arrive collapses to the line 0.0.1 drew, once.
+    #[test]
+    fn a_failed_picture_is_the_alt_line_again() {
+        let mut known = HashMap::new();
+        known.insert("p.png".to_string(), PictureKnown::Failed);
+        let r = with_pictures(
+            "![a diagram](p.png)
+",
+            40,
+            &sizes(&known, 12),
+        );
+        assert!(r.pictures.is_empty());
+        assert_eq!(drawn(&r)[0], "[image: a diagram]");
+    }
+
+    /// With no sizes at all -- pictures off, graphics off, a terminal with
+    /// no protocol -- every image is the line it always was, and the
+    /// existing snapshots are unchanged.
+    #[test]
+    fn no_sizes_is_the_line_this_release_started_with() {
+        let r = render(
+            "![a diagram](p.png)
+",
+            40,
+        );
+        assert!(r.pictures.is_empty());
+        assert_eq!(drawn(&r)[0], "[image: a diagram]");
+    }
+
+    /// A picture inside a quote is spliced like the text around it: the
+    /// gutter moves its rows down and its columns across, so the second
+    /// pass draws it beside the bar rather than over it.
+    #[test]
+    fn a_picture_inside_a_quote_is_offset_by_the_gutter() {
+        let mut known = HashMap::new();
+        known.insert("p.png".to_string(), PictureKnown::Natural(64, 32));
+        let r = with_pictures(
+            "lead in\n\n> quoted\n>\n> ![a](p.png)\n",
+            40,
+            &sizes(&known, 12),
+        );
+        assert_eq!(r.pictures.len(), 1, "{:?}", drawn(&r));
+        let slot = &r.pictures[0];
+        assert_eq!(slot.col, GUTTER, "the quote bar is two columns");
+        assert!(slot.row >= 2, "below the lead-in and the quote's first row");
+        assert!(
+            drawn(&r)[slot.row as usize].starts_with(QUOTE_BAR),
+            "{:?}",
+            drawn(&r)[slot.row as usize]
+        );
+    }
+
+    /// A picture with no address cannot be fetched, so it is the line
+    /// instead -- which is what an image inside a heading or a table cell
+    /// has already become by the time this sees it.
+    #[test]
+    fn a_picture_with_no_address_is_the_line() {
+        let known = HashMap::new();
+        let r = with_pictures("![a](<>)\n", 40, &sizes(&known, 12));
+        assert!(r.pictures.is_empty(), "{:?}", r.pictures);
+    }
+
     #[test]
     fn the_plain_text_is_the_words_without_the_decoration() {
         let r = render("# Title\n\nSome **words** here.\n", 40);
@@ -936,7 +1296,11 @@ mod tests {
         ) {
             let theme = theme("terminal");
             let doc = parse(&text);
-            let r = layout(&doc, &LayoutCtx { theme: &theme, width });
+            let r = layout(&doc, &LayoutCtx {
+                    theme: &theme,
+                    width,
+                    pictures: None,
+                });
             prop_assert_eq!(usize::from(r.height), r.lines.len());
             for line in &r.lines {
                 prop_assert!(row_width(line) <= width);

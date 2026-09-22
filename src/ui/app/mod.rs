@@ -1453,6 +1453,8 @@ impl App {
             extracted_at: article.extracted_at,
             width,
             theme_gen: self.theme_gen,
+            picture_rows: 0,
+            pictures_gen: 0,
         };
         let theme = self.theme.clone();
         let text = article.markdown.clone();
@@ -1465,6 +1467,7 @@ impl App {
                 &markdown::layout::LayoutCtx {
                     theme: &theme,
                     width,
+                    pictures: None,
                 },
             )
         });

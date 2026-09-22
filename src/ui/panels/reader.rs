@@ -361,7 +361,14 @@ mod tests {
 
     fn rendered(t: &Theme, width: u16) -> Arc<Rendered> {
         let doc = parse::parse(crate::ui::markdown::FIXTURE_MD);
-        Arc::new(layout::layout(&doc, &layout::LayoutCtx { theme: t, width }))
+        Arc::new(layout::layout(
+            &doc,
+            &layout::LayoutCtx {
+                theme: t,
+                width,
+                pictures: None,
+            },
+        ))
     }
 
     fn view<'a>(t: &'a Theme, r: Option<Arc<Rendered>>) -> View<'a> {
@@ -488,7 +495,11 @@ mod tests {
         let doc = parse::parse("A short description of the video.");
         let r = Arc::new(layout::layout(
             &doc,
-            &layout::LayoutCtx { theme: &t, width },
+            &layout::LayoutCtx {
+                theme: &t,
+                width,
+                pictures: None,
+            },
         ));
         let v = View {
             kind: EntryKind::Video,

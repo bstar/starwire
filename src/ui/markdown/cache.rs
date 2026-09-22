@@ -1,9 +1,10 @@
 //! Eight laid-out articles, kept.
 //!
 //! Parsing an article is cheap and laying one out is not, and the answer
-//! only changes when four things do: which entry it is, when its text was
-//! last written, how wide the panel is and which theme is up. That is
-//! exactly [`Key`], and it is the whole of the cache's cleverness.
+//! only changes when six things do: which entry it is, when its text was
+//! last written, how wide the panel is, which theme is up, how many rows a
+//! picture may take, and what is known about the pictures themselves. That
+//! is exactly [`Key`], and it is the whole of the cache's cleverness.
 //!
 //! Eight entries, because eight is what `n` and `p` back and forth over a
 //! handful of articles costs, plus the old width still being held while a
@@ -38,6 +39,16 @@ pub struct Key {
     /// two resolved themes and is the only thing the cache needs to know
     /// about a cycle of `t`.
     pub theme_gen: u64,
+    /// The cap one picture is laid out against: `[reading] image_rows`, or
+    /// a third of the reader's body where that is zero -- so it changes
+    /// when the window is resized as well as when the setting is.
+    pub picture_rows: u16,
+    /// Bumped whenever anything else a picture's rows depend on moved: one
+    /// arrived or failed, the terminal reported a different cell size after
+    /// a font zoom, the graphics mode changed, or the pictures were turned
+    /// off. One number rather than a copy of the store, for `theme_gen`'s
+    /// reason: the question is only ever "is this still the answer".
+    pub pictures_gen: u64,
 }
 
 /// A small least-recently-used cache of laid-out articles.
@@ -128,6 +139,8 @@ mod tests {
             extracted_at: None,
             width,
             theme_gen: 0,
+            picture_rows: 0,
+            pictures_gen: 0,
         }
     }
 
@@ -154,7 +167,7 @@ mod tests {
         assert!(Arc::ptr_eq(&first, &again));
     }
 
-    /// Each of the four parts of the key really is part of it.
+    /// Each of the six parts of the key really is part of it.
     #[test]
     fn every_part_of_the_key_is_a_miss_when_it_changes() {
         let base = Key {
@@ -162,6 +175,8 @@ mod tests {
             extracted_at: None,
             width: 80,
             theme_gen: 0,
+            picture_rows: 0,
+            pictures_gen: 0,
         };
         let stamped = Timestamp::from_second(1_700_000_000).unwrap();
         let others = [
@@ -176,6 +191,14 @@ mod tests {
             Key { width: 72, ..base },
             Key {
                 theme_gen: 1,
+                ..base
+            },
+            Key {
+                picture_rows: 8,
+                ..base
+            },
+            Key {
+                pictures_gen: 1,
                 ..base
             },
         ];
