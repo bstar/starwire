@@ -166,14 +166,17 @@ whole list its refreshes), and a Hacker News item whose link goes back into
 `news.ycombinator.com`. An `hnrss` item that links out **is** fetched, which
 is most of the value of reading HN in a reader at all.
 
-Two things fetch *more* than 0.0.1 did, and both are deliberate and narrow.
-Redirects are followed here rather than by `ureq`, which is the same number of
-requests with a lease on each hop instead of none. And an article the site
-split across pages is joined up -- only where `extract::rules` says that site
-does it, only while the pages stay on the same host and under the same path,
-at most eight pages, one lease each. Following every `rel="next"` on the web
-would be eight requests for every paginated archive, which is why it is a
-table rather than a heuristic.
+Three things fetch *more* than 0.0.1 did, and all three are deliberate and
+narrow. Redirects are followed here rather than by `ureq`, which is the same
+number of requests with a lease on each hop instead of none. An article the
+site split across pages is joined up -- only where `extract::rules` says that
+site does it, only while the pages stay on the same host and under the same
+path, at most eight pages, one lease each. Following every `rel="next"` on the
+web would be eight requests for every paginated archive, which is why it is a
+table rather than a heuristic. And a page that answers 403 is asked once more
+with `net::BROWSER_USER_AGENT` -- one extra request, only for a 403, only in
+`extract::run`, and nothing at all for a site that does not refuse the honest
+agent; see the measurement below.
 
 ## The two html5ever copies
 
@@ -249,6 +252,18 @@ What was observed, so that the next person does not have to guess at it:
   Eight is the cap, so the last page of a nine-page review is still missed;
   raising it is one number, and the reason it is not raised is that eight
   pages is already eight requests for one entry.
+- **A 403 is not always a wall, measured.** `iflscience.com` (from the Drudge
+  feed) answers `starwire/0.0.2 (+https://github.com/bstar/starwire)` with a
+  CloudFront 403 -- `x-cache: Error from cloudfront`, a 919-byte error page --
+  and bare `curl` gets the same; a desktop Chrome user agent with a browser's
+  `Accept` and `Accept-Language` gets 200 and the whole article. So an edge
+  firewall filtering on the user agent, with nothing to pay and nothing to log
+  into. The audit that classed a 403 as permanent measured NYT, WSJ, Reuters
+  and Medium, where a browser is refused the same way: true there, not
+  universal, and `extract::run` now asks a second time rather than assuming.
+  Twenty-two entries in the reference database were stored as
+  `<host> answered 403` with `attempts = 1`, which is what the 2 -> 3
+  migration is for.
 - **The site rules, against the sites.** GamingOnLinux without its footer,
   KitGuru without its share bar or its "Check Also" list, Arch's short news
   items extracting where they used to be refused, and a Bloomberg article

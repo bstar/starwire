@@ -33,7 +33,11 @@ A few errors mean particular things:
   moved it.
 - **`410`** — it has been withdrawn, and it is not coming back. Remove it.
 - **`401` / `403`** — it needs credentials, or it refuses this reader.
-  STAR/WIRE sends no credentials and has no way to.
+  STAR/WIRE sends no credentials and has no way to. A page — as opposed to a
+  feed — that answers 403 is asked once more with a browser's user agent
+  before it is written off, because some sites are behind an edge firewall
+  rather than a paywall; a 403 you see recorded against an article refused
+  both.
 - **`429`** — too many requests. Raise `[fetch] min_host_interval_secs`, or
   add a line for that host to `[fetch] host_intervals`, or lower
   `[fetch] refresh_minutes`.

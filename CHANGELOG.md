@@ -5,6 +5,20 @@ and this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `403` is asked once more, as a browser.** Not every one of them is a
+  wall: IFLScience sits behind a CloudFront rule that filters on the user
+  agent and nothing else, so STAR/WIRE's own agent got a 403 and a 919-byte
+  error page where a browser gets the whole article — and twenty-two entries
+  in a real database were written off as paywalls on the strength of it. The
+  honest agent still goes first, every time; only a 403 buys a second request,
+  with a browser's user agent and its `Accept` and `Accept-Language` beside it;
+  a `401` or a `402` means what it says and is never asked twice; and a 403
+  that refuses both is the wall it looks like. It happens inside the one
+  attempt, so a page behind a firewall still has all three of its own, and the
+  migration to schema 3 offers the 403s already in the file the same one go.
+
 ## [0.0.2] - 2026-09-21
 
 ### Added

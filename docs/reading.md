@@ -39,7 +39,9 @@ This happens in the background as entries arrive, which is why opening one is
 instant rather than a wait.
 
 In order, then: **the page, its other pages, its JSON-LD, the feed's own
-text.** Something at every step, and the feed's text underneath all of it.
+text** — and a `403` is tried once more as a browser, since some edge
+firewalls refuse anything else, while a wall that refuses both is left alone.
+Something at every step, and the feed's text underneath all of it.
 
 ## In the reader
 
@@ -107,10 +109,21 @@ not pretend to be the article.
 **Some failures come back on their own.** A `429`, a `5xx` and a timeout are
 facts about that minute, so the entry rejoins the queue after
 `[fetch] refresh_minutes`, doubling for each attempt and capped at a day. A
-`401`, a `402`, a `403`, a `404` and "does not read like an article" are facts
-about the page and stay where they are — a browser's user agent gets the same
-codes, which has been measured. Either way an entry costs at most three
-requests ever, and `e` in the reader forces another.
+`401`, a `402`, a `404` and "does not read like an article" are facts about the
+page and stay where they are — a browser's user agent gets the same codes,
+which has been measured.
+
+**A `403` is asked once more, as a browser.** Not every one of them is a wall:
+some sites sit behind an edge firewall that filters on the user agent and
+nothing else, and IFLScience is one — CloudFront refuses STAR/WIRE's own agent
+with a 403 and a 919-byte error page, and serves a browser the whole article.
+So a 403 costs a second request straight away, with a browser's user agent and
+its headers, and a 403 that refuses that too is the wall it looks like and is
+left alone. The honest agent goes first every time, and a site that does not
+refuse it never sees the other one.
+
+Either way an entry costs at most three attempts ever, and `e` in the reader
+forces another.
 
 `starwire extract <url>` runs the whole thing on one page and prints the
 result, without a feed and without writing anything. It is the fastest way to
@@ -144,7 +157,9 @@ entry, at most three times ever. The politeness is in the construction:
   no body.
 - A user agent that names the program and links the repository, so an
   administrator unhappy about the traffic knows who to ask. Add your own
-  contact with `[fetch] user_agent_extra`.
+  contact with `[fetch] user_agent_extra`. It is what every request goes out
+  with, and the only exception is the second try at a page that answered 403,
+  above.
 
 Everything is https. A feed URL written as `http://` is rewritten on the way
 in, and a redirect to plaintext is refused.
