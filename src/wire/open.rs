@@ -11,6 +11,7 @@
 //! reader for eleven minutes.
 
 use std::ffi::OsString;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use super::PlayerConfig;
@@ -20,12 +21,45 @@ use super::PlayerConfig;
 pub enum Target {
     Browser(String),
     Video(String),
+    /// A picture from inside an article.
+    Picture(PictureSource),
+}
+
+/// Which of the two spellings of a picture is handed over.
+///
+/// The file where the bytes are already cached, because that is what makes
+/// an image viewer open rather than a browser -- `xdg-open` on an `https`
+/// URL is a browser whatever the URL points at, and a browser opening one
+/// picture is a second fetch and a window somebody has to close. The URL is
+/// the fallback for a picture that has not arrived yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PictureSource {
+    File(PathBuf),
+    Url(String),
 }
 
 impl Target {
-    pub fn url(&self) -> &str {
+    /// The URL this target names, where it names one. `None` for a picture
+    /// already on disk, which is a path and not a link.
+    pub fn url(&self) -> Option<&str> {
         match self {
-            Target::Browser(u) | Target::Video(u) => u,
+            Target::Browser(u) | Target::Video(u) => Some(u),
+            Target::Picture(PictureSource::Url(u)) => Some(u),
+            Target::Picture(PictureSource::File(_)) => None,
+        }
+    }
+
+    /// The single argument the opener is given.
+    ///
+    /// An `OsString` rather than a `String` because a cached picture is a
+    /// path, and a path on this machine is not required to be UTF-8. It is
+    /// always exactly one argument -- never appended to another, never
+    /// split -- whatever is in it.
+    pub fn argument(&self) -> OsString {
+        match self {
+            Target::Browser(u) | Target::Video(u) => OsString::from(u),
+            Target::Picture(PictureSource::Url(u)) => OsString::from(u),
+            Target::Picture(PictureSource::File(path)) => path.clone().into_os_string(),
         }
     }
 }
@@ -60,15 +94,16 @@ pub fn argv(target: &Target, cfg: &PlayerConfig) -> Vec<OsString> {
     let configured = match target {
         Target::Browser(_) => &cfg.browser,
         Target::Video(_) => &cfg.video,
+        Target::Picture(_) => &cfg.image,
     };
     let mut out: Vec<OsString> = if configured.is_empty() {
         vec![OsString::from(default_opener())]
     } else {
         configured.iter().map(OsString::from).collect()
     };
-    // The URL is always exactly one more argument, whatever it contains --
-    // never appended to an existing argument, never split.
-    out.push(OsString::from(target.url()));
+    // What is opened is always exactly one more argument, whatever it
+    // contains -- never appended to an existing argument, never split.
+    out.push(target.argument());
     out
 }
 
@@ -188,6 +223,62 @@ mod tests {
         let got = argv(&Target::Browser(nasty.into()), &cfg);
         assert_eq!(got.len(), 2, "the URL was split: {got:?}");
         assert_eq!(got[1], OsString::from(nasty));
+    }
+
+    /// A picture goes to the image opener, and the cached file is what it is
+    /// given: `xdg-open` on an `https` URL is a browser however the URL
+    /// ends, and a browser is not what somebody clicking a picture asked
+    /// for.
+    #[test]
+    fn a_picture_is_opened_on_the_file_where_there_is_one() {
+        let cfg = PlayerConfig::default();
+        let cached = Target::Picture(PictureSource::File(PathBuf::from(
+            "/home/somebody/.local/starwire/cache/pictures/abc.png",
+        )));
+        let got = argv(&cached, &cfg);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0], OsString::from(default_opener()));
+        assert_eq!(
+            got[1],
+            OsString::from("/home/somebody/.local/starwire/cache/pictures/abc.png")
+        );
+        assert_eq!(cached.url(), None, "a path is not a link");
+
+        // Nothing on disk yet: the URL, which is still one argument.
+        let remote = Target::Picture(PictureSource::Url("https://e.org/a.png".into()));
+        assert_eq!(remote.url(), Some("https://e.org/a.png"));
+        assert_eq!(
+            argv(&remote, &cfg),
+            vec![
+                OsString::from(default_opener()),
+                OsString::from("https://e.org/a.png")
+            ]
+        );
+
+        // And `[player] image` wins over the desktop's own opener.
+        let cfg = PlayerConfig {
+            image: vec!["feh".into(), "--".into()],
+            ..PlayerConfig::default()
+        };
+        assert_eq!(
+            argv(&remote, &cfg),
+            vec![
+                OsString::from("feh"),
+                OsString::from("--"),
+                OsString::from("https://e.org/a.png"),
+            ]
+        );
+    }
+
+    /// A path with a newline, a quotation mark or a semicolon in it is
+    /// somebody else's filename, and it stays one argument.
+    #[test]
+    fn a_hostile_path_stays_one_argument() {
+        let cfg = PlayerConfig::default();
+        let nasty = PathBuf::from("/tmp/a b; rm -rf ~\n\"$(id)\".png");
+        let got = argv(&Target::Picture(PictureSource::File(nasty.clone())), &cfg);
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!(got[1], nasty.into_os_string());
     }
 
     #[test]

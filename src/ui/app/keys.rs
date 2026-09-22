@@ -156,7 +156,8 @@ impl App {
         };
         let kind = match open::kind_of(&url) {
             open::Target::Video(_) => OpenKind::Video,
-            open::Target::Browser(_) => OpenKind::Browser,
+            // `kind_of` answers for a link, and a link is one of the two.
+            _ => OpenKind::Browser,
         };
         self.core.send(Command::OpenUrl { url, kind });
         self.say(format!("opening link {n}"));
