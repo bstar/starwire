@@ -198,9 +198,10 @@ pub enum NetJob {
         cookies_from_browser: Option<String>,
     },
     /// One picture from inside an article: the cached file if there is one,
-    /// a request if there is not, and a decode either way. On the background
-    /// lane, behind a generation of its own so that closing the article
-    /// drops what has not started.
+    /// a request if there is not, and a decode either way. On the urgent
+    /// lane -- a picture is only asked for when it is on the screen -- and
+    /// behind a generation of its own so that closing the article drops what
+    /// has not started.
     Picture {
         url: String,
         max_w: u32,
@@ -932,7 +933,20 @@ fn run_net(
             generation,
         } => {
             if is_stale_picture(state, *generation) {
-                return Vec::new();
+                // The answer is thrown away and the *slot* is not. The
+                // ceiling in `pump_pictures` counts what is in flight, so a
+                // job that ends without a `Done` is one picture's worth of
+                // room nothing ever gives back -- and two of those, at
+                // `pictures::PARALLEL`, is a reader whose pictures stop
+                // arriving for the rest of the session, which is what
+                // holding `n` down through an article with pictures in it
+                // used to do. `done_picture` frees the slot and keeps
+                // nothing.
+                return vec![Done::Picture {
+                    url: url.clone(),
+                    result: Err("the reader moved on".to_string()),
+                    generation: *generation,
+                }];
             }
             let result =
                 super::pictures::fetch(http, cfg.pictures_dir.as_deref(), url, *max_w, *max_h)
@@ -1279,6 +1293,54 @@ mod tests {
             &state,
         );
         assert!(done.is_empty());
+    }
+
+    /// A picture the reader moved on from is not fetched, and the room it
+    /// was holding comes back. Nothing is written: `done_picture` throws a
+    /// stale answer away.
+    #[test]
+    fn a_stale_picture_gives_its_slot_back() {
+        let fixture = Fixture::seeded();
+        let cfg = WireConfig::default();
+        let state = state_of(&cfg);
+        {
+            let mut s = state.write().unwrap_or_else(|e| e.into_inner());
+            s.picture_generation = 1;
+            s.picture_inflight = 1;
+        }
+
+        let done = perform_net(
+            NetJob::Picture {
+                url: "https://example.org/hero.png".into(),
+                max_w: 640,
+                max_h: 320,
+                generation: 0,
+            },
+            Lane::Urgent,
+            &fixture.http,
+            &cfg,
+            &state,
+        );
+        assert!(
+            matches!(
+                done.as_slice(),
+                [Done::Picture {
+                    result: Err(_),
+                    generation: 0,
+                    ..
+                }]
+            ),
+            "{done:?}"
+        );
+
+        for done in done {
+            finish(done, &state, &sink().0, &channels().0);
+        }
+        let s = state.read().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(
+            s.picture_inflight, 0,
+            "two of these and `pump_pictures` never starts another picture"
+        );
     }
 
     #[test]

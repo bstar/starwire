@@ -36,7 +36,11 @@ and this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html)
   it could be. Ordinary two-second gaps are still waited in place, so a feed
   list with no rule in it behaves exactly as it did, and `starwire fetch`
   from a timer still waits, because a subcommand has no clock to come back
-  to.
+  to. The pictures inside an open article are urgent work besides — somebody
+  is looking at the rows they are going to fill — and a picture cancelled by
+  moving to another article now gives its slot back rather than keeping it,
+  which on its own was enough to stop a reader's pictures arriving for the
+  rest of the session.
 
 - **A `403` is asked once more, as a browser.** Not every one of them is a
   wall: IFLScience sits behind a CloudFront rule that filters on the user

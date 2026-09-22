@@ -1240,6 +1240,17 @@ fn cmd_fetch_picture(state: &mut State, url: String, max_w: u32, max_h: u32) -> 
 }
 
 /// Start as many queued pictures as the in-flight ceiling allows.
+///
+/// On the urgent lane, because a picture is only ever asked for when it is
+/// on the screen: the reader is looking at the row of `░` it is going to
+/// fill, the same way they are waiting for the extraction of the entry they
+/// opened, which is urgent for the same reason. Behind a refresh of
+/// forty-one feeds it is not a picture that arrives late, it is one that
+/// does not arrive while anybody is there to see it.
+///
+/// The ceiling stays where it was. The lane decides what a free thread picks
+/// up first; how many of them are fetching pictures at once is a question
+/// about the host, and `pictures::PARALLEL` is still the answer.
 fn pump_pictures(state: &mut State) -> Effects {
     let mut effects = Effects::none();
     while state.picture_inflight < super::pictures::PARALLEL {
@@ -1254,7 +1265,7 @@ fn pump_pictures(state: &mut State) -> Effects {
                 max_h,
                 generation: state.picture_generation,
             },
-            Lane::Background,
+            Lane::Urgent,
         ));
     }
     effects
@@ -2560,17 +2571,24 @@ mod tests {
         let mut s = state();
         let url = "https://e.org/hero.png";
         let effects = ask(&mut s, url, 640, 320);
-        assert!(matches!(
-            net_jobs(&effects).as_slice(),
-            [(
-                NetJob::Picture {
-                    max_w: 640,
-                    max_h: 320,
-                    ..
-                },
-                Lane::Background
-            )]
-        ));
+        assert!(
+            matches!(
+                net_jobs(&effects).as_slice(),
+                [(
+                    NetJob::Picture {
+                        max_w: 640,
+                        max_h: 320,
+                        ..
+                    },
+                    // Urgent: this was asked for because it is on the
+                    // screen, with the reader looking at the rows it is
+                    // going to fill.
+                    Lane::Urgent
+                )]
+            ),
+            "{:?}",
+            net_jobs(&effects)
+        );
         assert!(matches!(s.pictures.get(url), Some(PictureState::Loading)));
 
         for _ in 0..5 {
