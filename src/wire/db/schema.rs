@@ -23,7 +23,7 @@
 
 /// Bumped when the DDL below changes in a way an existing file needs helping
 /// across. `db::migrate` is where that help goes.
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 /// The same set STAR/AMP opens its index with, for the same reasons.
 ///
@@ -136,8 +136,9 @@ CREATE TABLE IF NOT EXISTS article (
   attempts     INTEGER NOT NULL DEFAULT 0,
   error        TEXT,
   -- When a failure is worth another attempt, and NULL when it is not. A 429,
-  -- a 5xx and a timeout are facts about today; a 401, a 403 and a page that
-  -- does not read like an article are facts about the page.
+  -- a 5xx and a timeout are facts about today; a 401, a 403 that refused a
+  -- browser's user agent as well, and a page that does not read like an
+  -- article are facts about the page.
   retry_after  INTEGER
 );
 CREATE INDEX IF NOT EXISTS article_pending_idx ON article(status) WHERE status = 0;

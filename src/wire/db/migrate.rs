@@ -30,10 +30,13 @@ use super::schema;
 pub fn migrate(conn: &Connection, from: i32) -> Result<()> {
     match from {
         0 => {}
-        // The arms fall through: a file at 1 runs 1->2 and then 2->3 when
-        // there is a 3, which is what makes a build that skipped three
-        // releases work.
-        1 => one_to_two(conn)?,
+        // Each arm runs the ones after it as well: a file at 1 runs 1->2 and
+        // then 2->3, which is what makes a build that skipped a release work.
+        1 => {
+            one_to_two(conn)?;
+            two_to_three(conn)?;
+        }
+        2 => two_to_three(conn)?,
         v if v == schema::SCHEMA_VERSION => return Ok(()),
         v if v > schema::SCHEMA_VERSION => anyhow::bail!(
             "{} was written by a newer STAR/WIRE (schema {v}, this build reads {}); \
@@ -60,6 +63,31 @@ fn one_to_two(conn: &Connection) -> Result<()> {
     backfill_failed_markdown(conn)?;
     offer_the_transient_failures_another_go(conn)?;
     recanonicalise_feed_urls(conn)?;
+    Ok(())
+}
+
+/// 0.0.2 to 0.0.3.
+///
+/// One thing, and it is a value rather than a column: the 403s get the browser
+/// try. 0.0.1 and 0.0.2 both wrote a 403 down as final, on an audit that
+/// measured NYT, WSJ, Reuters and Medium -- where a browser's user agent is
+/// refused the same way, so it was true there. It is not universal:
+/// `iflscience.com` answers this program's agent with a CloudFront 403 and a
+/// browser's with the whole article, and twenty-two rows in the reference
+/// database are that rather than a paywall. `extract::run` now asks a second
+/// time inside the attempt; this is what lets the rows already in the file
+/// find that out, once, at the next refresh.
+///
+/// `attempts < 2` rather than `< MAX_ATTEMPTS`, and `attempts` untouched: a row
+/// that has already spent two of its three gets no reprieve, and one that has
+/// spent one gets exactly one go as a browser. The `LIKE` matches the tail of
+/// the reason both versions wrote, which names the host that answered.
+fn two_to_three(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "UPDATE article SET retry_after = ?1
+         WHERE status = 3 AND error LIKE '% answered 403' AND attempts < 2",
+        [super::now()],
+    )?;
     Ok(())
 }
 
@@ -105,7 +133,8 @@ fn offer_the_transient_failures_another_go(conn: &Connection) -> Result<()> {
 /// The strings are 0.0.1's own: `the site answered 429`, `the site answered
 /// 503`, `timeout: global`. Anything else -- a 401, a 403, a page that does
 /// not read like an article, a body over the cap -- stays where it is, for
-/// the same reason `extract::run` does not retry it.
+/// the same reason `extract::run` does not retry it. A 403 is offered one go
+/// as a browser by [`two_to_three`] instead, which is a different question.
 fn was_transient(error: &str) -> bool {
     let error = error.to_ascii_lowercase();
     if error.contains("timeout") || error.contains("timed out") {
@@ -399,6 +428,214 @@ CREATE TABLE IF NOT EXISTS meta (
         migrate(conn, version).unwrap();
     }
 
+    /// 0.0.2's `SCHEMA`, kept here the same way V1_SCHEMA is and for the same
+    /// reason: pointing both sides of a migration test at one string answers a
+    /// much easier question than the one being asked. Schema 3 changes no DDL
+    /// at all -- it is a value rewritten -- so this is 0.0.2's DDL verbatim
+    /// with its comments taken out.
+    const V2_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS folder (
+  id       INTEGER PRIMARY KEY,
+  name     TEXT NOT NULL UNIQUE,
+  position INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS feed (
+  id            INTEGER PRIMARY KEY,
+  url           TEXT NOT NULL UNIQUE,
+  source_url    TEXT,
+  kind          INTEGER NOT NULL,            -- 0 web, 1 youtube, 2 reddit, 3 hn
+  title         TEXT,
+  custom_title  TEXT,
+  site_url      TEXT,
+  folder_id     INTEGER REFERENCES folder(id) ON DELETE SET NULL,
+  position      INTEGER NOT NULL DEFAULT 0,
+  etag          TEXT,
+  last_modified TEXT,
+  last_fetch    INTEGER,
+  last_ok       INTEGER,
+  last_error    TEXT,
+  failures      INTEGER NOT NULL DEFAULT 0,
+  backoff_until INTEGER,
+  added_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS feed_folder_idx ON feed(folder_id, position);
+CREATE INDEX IF NOT EXISTS feed_due_idx    ON feed(last_fetch);
+CREATE TABLE IF NOT EXISTS entry (
+  id            INTEGER PRIMARY KEY,
+  feed_id       INTEGER NOT NULL REFERENCES feed(id) ON DELETE CASCADE,
+  guid          TEXT NOT NULL,
+  url           TEXT,
+  final_url     TEXT,
+  title         TEXT NOT NULL DEFAULT '',
+  author        TEXT,
+  kind          INTEGER NOT NULL DEFAULT 0,  -- 0 article, 1 video, 2 post
+  published     INTEGER,
+  fetched_at    INTEGER NOT NULL,
+  content_html  TEXT,
+  thumbnail_url TEXT,
+  video_id      TEXT,
+  duration_secs INTEGER,
+  read          INTEGER NOT NULL DEFAULT 0,
+  starred       INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(feed_id, guid)
+);
+CREATE INDEX IF NOT EXISTS entry_feed_pub_idx ON entry(feed_id, published DESC);
+CREATE INDEX IF NOT EXISTS entry_unread_idx   ON entry(feed_id) WHERE read = 0;
+CREATE INDEX IF NOT EXISTS entry_url_idx      ON entry(url);
+CREATE INDEX IF NOT EXISTS entry_starred_idx  ON entry(starred) WHERE starred = 1;
+CREATE INDEX IF NOT EXISTS entry_kind_pub_idx ON entry(kind, published DESC);
+CREATE INDEX IF NOT EXISTS entry_pub_idx      ON entry(published DESC);
+CREATE TABLE IF NOT EXISTS article (
+  entry_id     INTEGER PRIMARY KEY REFERENCES entry(id) ON DELETE CASCADE,
+  status       INTEGER NOT NULL,
+  title        TEXT,
+  markdown     TEXT,
+  byline       TEXT,
+  site_name    TEXT,
+  image_url    TEXT,
+  excerpt      TEXT,
+  source_url   TEXT,
+  extracted_at INTEGER,
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  error        TEXT,
+  retry_after  INTEGER
+);
+CREATE INDEX IF NOT EXISTS article_pending_idx ON article(status) WHERE status = 0;
+CREATE VIRTUAL TABLE IF NOT EXISTS article_fts USING fts5(
+  title,
+  markdown,
+  content='article',
+  content_rowid='entry_id',
+  tokenize='unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER IF NOT EXISTS article_ai AFTER INSERT ON article BEGIN
+  INSERT INTO article_fts(rowid, title, markdown)
+  VALUES (new.entry_id, new.title, new.markdown);
+END;
+CREATE TRIGGER IF NOT EXISTS article_ad AFTER DELETE ON article BEGIN
+  INSERT INTO article_fts(article_fts, rowid, title, markdown)
+  VALUES ('delete', old.entry_id, old.title, old.markdown);
+END;
+CREATE TRIGGER IF NOT EXISTS article_au AFTER UPDATE ON article BEGIN
+  INSERT INTO article_fts(article_fts, rowid, title, markdown)
+  VALUES ('delete', old.entry_id, old.title, old.markdown);
+  INSERT INTO article_fts(rowid, title, markdown)
+  VALUES (new.entry_id, new.title, new.markdown);
+END;
+CREATE TABLE IF NOT EXISTS youtube_channel (
+  channel_id TEXT PRIMARY KEY,
+  title      TEXT,
+  handle     TEXT,
+  feed_id    INTEGER REFERENCES feed(id) ON DELETE CASCADE,
+  source     INTEGER NOT NULL,              -- 0 feed import, 1 add, 2 takeout, 3 ytsubs
+  added_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS youtube_feed_idx ON youtube_channel(feed_id);
+CREATE TABLE IF NOT EXISTS fetch_log (
+  id          INTEGER PRIMARY KEY,
+  feed_id     INTEGER REFERENCES feed(id) ON DELETE CASCADE,
+  at          INTEGER NOT NULL,
+  status      INTEGER,
+  bytes       INTEGER,
+  new_entries INTEGER,
+  millis      INTEGER,
+  error       TEXT
+);
+CREATE INDEX IF NOT EXISTS fetch_log_at_idx ON fetch_log(at);
+CREATE TABLE IF NOT EXISTS imported_read (
+  feed_url TEXT NOT NULL,
+  guid     TEXT NOT NULL,
+  url      TEXT,
+  PRIMARY KEY (feed_url, guid)
+);
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT
+);
+"#;
+
+    /// A file as 0.0.2 left it: four failures, and the 403s are the question.
+    fn v2_file() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(schema::PRAGMAS).unwrap();
+        conn.execute_batch(V2_SCHEMA).unwrap();
+        conn.execute_batch(
+            "INSERT INTO feed(id, url, kind, added_at) VALUES (1, 'https://e.org/f', 0, 0);
+             INSERT INTO entry(id, feed_id, guid, url, title, fetched_at, content_html)
+             VALUES (1, 1, 'a', 'https://www.iflscience.com/a-84694', 'Behind a firewall', 0,
+                     '<p>Two sentences.</p>'),
+                    (2, 1, 'b', 'https://www.nytimes.com/2026/09/a', 'Asked twice already', 0, NULL),
+                    (3, 1, 'c', 'https://e.org/c', 'Needs an account', 0, NULL),
+                    (4, 1, 'd', 'https://e.org/d', 'Read perfectly well', 0, NULL);
+             INSERT INTO article(entry_id, status, attempts, error)
+             VALUES (1, 3, 1, 'iflscience.com answered 403'),
+                    (2, 3, 2, 'nytimes.com answered 403'),
+                    (3, 3, 1, 'e.org answered 401'),
+                    (4, 1, 1, NULL);",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+        conn
+    }
+
+    /// 2 -> 3: the rows 0.0.1 and 0.0.2 wrote off as a wall get the one
+    /// request as a browser that would have told them apart.
+    #[test]
+    fn a_file_from_0_0_2_offers_its_403s_one_go_as_a_browser() {
+        let conn = v2_file();
+        open_as_the_program_does(&conn);
+        let v: i32 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, schema::SCHEMA_VERSION);
+
+        let retry = |entry: i64| -> Option<i64> {
+            conn.query_row(
+                "SELECT retry_after FROM article WHERE entry_id = ?1",
+                [entry],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert!(
+            retry(1).is_some(),
+            "a 403 with one attempt spent is worth asking as a browser"
+        );
+        assert_eq!(
+            retry(2),
+            None,
+            "one that has spent two of its three is not: the browser try would \
+             be the last request it ever gets and it is already the second"
+        );
+        assert_eq!(retry(3), None, "a 401 is a wall by definition");
+        assert_eq!(retry(4), None, "and nothing failed here at all");
+    }
+
+    /// A 0.0.2 file that has been opened by 0.0.3 once is left alone the
+    /// second time: the row it offered has either succeeded or been written
+    /// again, and a migration that ran twice must not reset the clock.
+    #[test]
+    fn migrating_a_0_0_2_file_twice_changes_nothing() {
+        let conn = v2_file();
+        open_as_the_program_does(&conn);
+        let once = conn
+            .query_row(
+                "SELECT retry_after FROM article WHERE entry_id = 1",
+                [],
+                |r| r.get::<_, Option<i64>>(0),
+            )
+            .unwrap();
+        open_as_the_program_does(&conn);
+        let twice = conn
+            .query_row(
+                "SELECT retry_after FROM article WHERE entry_id = 1",
+                [],
+                |r| r.get::<_, Option<i64>>(0),
+            )
+            .unwrap();
+        assert_eq!(once, twice);
+    }
+
     #[test]
     fn a_file_from_0_0_1_comes_up_to_the_current_version() {
         let conn = v1_file();
@@ -451,7 +688,10 @@ CREATE TABLE IF NOT EXISTS meta (
         };
         assert!(retry(3).is_some(), "a 429 is worth asking again");
         assert!(retry(4).is_some(), "so is a timeout");
-        assert_eq!(retry(1), None, "a 403 is a fact about the page");
+        assert!(
+            retry(1).is_some(),
+            "and a 403 is worth one go as a browser, which is 2->3's doing"
+        );
         assert_eq!(
             retry(5),
             None,
