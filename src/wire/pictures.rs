@@ -324,7 +324,7 @@ pub fn sweep(dir: &Path, max_bytes: u64, keep_days: u32, now: SystemTime) -> u64
     entries.sort_by_key(|(_, _, modified)| *modified);
 
     let keep = std::time::Duration::from_secs(u64::from(keep_days) * 24 * 60 * 60);
-    let mut remove =
+    let remove =
         |path: &Path, size: u64, total: &mut u64, freed: &mut u64| match std::fs::remove_file(path)
         {
             Ok(()) => {

@@ -162,6 +162,17 @@ pub enum Command {
         url: String,
         kind: OpenKind,
     },
+    /// Fetch a picture the open article carries, at no more than `max_w` by
+    /// `max_h` pixels. Idempotent: the window sends it for every picture on
+    /// screen every frame, and the core answers the second one with nothing.
+    FetchPicture {
+        url: String,
+        max_w: u32,
+        max_h: u32,
+    },
+    /// Hand a picture to the desktop: the cached file where the bytes have
+    /// arrived, and the URL where they have not.
+    OpenPicture(String),
     SetSetting(Setting),
     Shutdown,
 }
@@ -226,6 +237,10 @@ pub enum Event {
         total: usize,
     },
     Note(Note),
+    /// `State::pictures` changed -- one arrived, one failed, or they were
+    /// all dropped. The window re-reads them and lays the article out again
+    /// if a size it did not know is now known.
+    Pictures,
     /// `State::import_offer` changed.
     ImportOffer,
     /// Events were dropped. Whatever the window believes about its

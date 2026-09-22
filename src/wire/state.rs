@@ -26,7 +26,8 @@
 //!   counts immediately and queue the write; the row the list draws is never
 //!   a round trip behind the key that changed it.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::sync::Arc;
 
 use jiff::Timestamp;
 
@@ -38,7 +39,8 @@ use super::feed::{
 };
 use super::handle::{Command, Event, ImportOffer, Note, OpenKind, RefreshScope, Setting};
 use super::import::ImportReport;
-use super::open::Target;
+use super::open::{PictureSource, Target};
+use super::pictures::Picture;
 use super::search;
 use super::worker::{DbJob, Done, Job, Lane, NetJob};
 use super::WireConfig;
@@ -131,6 +133,82 @@ impl EntryPage {
     /// Whether every row the selection has is loaded.
     pub fn is_complete(&self) -> bool {
         self.rows.len() as i64 >= self.total
+    }
+}
+
+/// One picture from inside an article, as far as the core has got with it.
+#[derive(Debug, Clone)]
+pub enum PictureState {
+    /// Asked for, not here yet. The reader draws a box of `\u{2591}`.
+    Loading,
+    Ready(Arc<Picture>),
+    /// It will not arrive, and this is why. Kept rather than retried, so a
+    /// picture behind a 403 costs one request per article opened rather than
+    /// one per frame; `e` re-extracts and opening the entry again re-asks.
+    Failed(String),
+}
+
+/// The pictures the open article has asked for, most recently touched last.
+///
+/// A `Vec` rather than a map, for `markdown::cache`'s reason: the capacity is
+/// thirty-two, a linear scan of thirty-two string comparisons is nothing
+/// beside decoding one of them, and the ordering an LRU needs is free when
+/// the entries are in a list.
+///
+/// It is **not** cleared when the article changes. The bytes are already
+/// decoded, and `n`, `p` and back again over a handful of articles is the
+/// case that makes a reader feel slow; what is cleared is the queue of what
+/// has not started.
+#[derive(Debug, Default)]
+pub struct Pictures {
+    entries: Vec<(String, PictureState)>,
+    /// The largest box each URL has been asked at. A picture already here at
+    /// a third of a sixty-column reader is asked for again when the window is
+    /// widened, and not otherwise.
+    asked: HashMap<String, (u32, u32)>,
+    /// Bumped whenever anything above changed, so the window can tell "a
+    /// picture landed" from "nothing happened" without comparing the lot.
+    pub version: u64,
+}
+
+impl Pictures {
+    /// What is known about a URL, without counting as having looked at it.
+    pub fn get(&self, url: &str) -> Option<&PictureState> {
+        self.entries.iter().find(|(u, _)| u == url).map(|(_, s)| s)
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// The size a URL was last asked at, if it has been.
+    pub fn asked(&self, url: &str) -> Option<(u32, u32)> {
+        self.asked.get(url).copied()
+    }
+
+    fn put(&mut self, url: &str, state: PictureState) {
+        if let Some(at) = self.entries.iter().position(|(u, _)| u == url) {
+            self.entries.remove(at);
+        }
+        self.entries.push((url.to_string(), state));
+        while self.entries.len() > super::pictures::CAPACITY {
+            let (gone, _) = self.entries.remove(0);
+            self.asked.remove(&gone);
+        }
+        self.version += 1;
+    }
+
+    fn clear(&mut self) {
+        if self.entries.is_empty() && self.asked.is_empty() {
+            return;
+        }
+        self.entries.clear();
+        self.asked.clear();
+        self.version += 1;
     }
 }
 
@@ -238,6 +316,17 @@ pub struct State {
     /// Entries waiting for their page to be pulled, newest first.
     pub extract_queue: VecDeque<(EntryId, String)>,
     pub extract_inflight: usize,
+    /// The pictures inside whatever article is open.
+    pub pictures: Pictures,
+    /// What has been asked for and not started: the URL and the box it is
+    /// wanted at.
+    pub picture_queue: VecDeque<(String, u32, u32)>,
+    pub picture_inflight: usize,
+    /// Bumped whenever the reader opens or closes an entry. A picture
+    /// carries the generation it was asked under and is dropped, unfetched,
+    /// when it is behind this -- which is what stops holding `n` down from
+    /// queueing every picture of every article it went past.
+    pub picture_generation: u64,
     /// Set when there is a newsboat list to offer to import, and the window
     /// has not been told about it yet.
     pub import_offer: Option<ImportOffer>,
@@ -273,6 +362,10 @@ impl State {
             refresh_counted: BTreeSet::new(),
             extract_queue: VecDeque::new(),
             extract_inflight: 0,
+            pictures: Pictures::default(),
+            picture_queue: VecDeque::new(),
+            picture_inflight: 0,
+            picture_generation: 0,
             import_offer: None,
             last_import: None,
             settings: RuntimeSettings::from(cfg),
@@ -387,6 +480,8 @@ fn apply_command(state: &mut State, command: Command) -> Effects {
             }),
             Lane::Urgent,
         )),
+        Command::FetchPicture { url, max_w, max_h } => cmd_fetch_picture(state, url, max_w, max_h),
+        Command::OpenPicture(url) => cmd_open_picture(state, url),
         Command::SetSetting(setting) => cmd_set_setting(state, setting),
         // The threads are stopped by `Handle::drop`, which is the only thing
         // that can join them. Nothing to fold in.
@@ -441,6 +536,11 @@ fn apply_done(state: &mut State, done: Done) -> Effects {
             }
             Effects::job(Job::Db(DbJob::AddChannels { channels, source }))
         }
+        Done::Picture {
+            url,
+            result,
+            generation,
+        } => done_picture(state, url, result, generation),
         Done::Pending(entries) => done_pending(state, entries),
         Done::Retained { retained, at } => done_retained(state, retained, at),
         Done::RefreshStamped(at) => {
@@ -559,6 +659,7 @@ fn done_entries(
 fn cmd_open_entry(state: &mut State, id: EntryId) -> Effects {
     state.open_entry = Some(id);
     state.article = None;
+    drop_picture_queue(state);
     let mut effects = Effects {
         jobs: vec![Job::Db(DbJob::LoadArticle(id))],
         events: vec![Event::Article(id)],
@@ -591,6 +692,7 @@ fn cmd_close_entry(state: &mut State) -> Effects {
         return Effects::none();
     };
     state.article = None;
+    drop_picture_queue(state);
     Effects::event(Event::Article(entry))
 }
 
@@ -993,6 +1095,138 @@ fn done_pending(state: &mut State, entries: Vec<(EntryId, String)>) -> Effects {
     pump_extractions(state)
 }
 
+// --------------------------------------------------------- the pictures ----
+
+/// Whether a URL is one this program will fetch.
+///
+/// Only `https`, which is not this function's opinion: the agent STAR/KIT
+/// builds refuses plaintext, so an `http:` picture would fail a request
+/// anyway and is answered here instead, without one. A `data:` URI has
+/// already been dropped by the extractor's own pre-pass -- this is the
+/// second line, for an article stored before that existed.
+fn fetchable(url: &str) -> Result<(), String> {
+    match url::Url::parse(url) {
+        Ok(parsed) if parsed.scheme() == "https" => Ok(()),
+        Ok(parsed) => Err(format!("{} is not https", parsed.scheme())),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Ask for one picture, at no more than `max_w` by `max_h` pixels.
+///
+/// Sent by the window for every picture on the screen on every frame, so
+/// nearly every call has nothing to do: what has been asked for at this size
+/// or larger, what is on its way, and what has already failed are all
+/// answered with no effects at all. A picture already here at a smaller box
+/// -- the reader was widened, or the window grew -- is asked for again,
+/// which is the one case that re-fetches.
+fn cmd_fetch_picture(state: &mut State, url: String, max_w: u32, max_h: u32) -> Effects {
+    if !state.settings.images || max_w == 0 || max_h == 0 {
+        return Effects::none();
+    }
+    if let Err(why) = fetchable(&url) {
+        // No job, and the answer is permanent: nothing about this URL will
+        // be different next time it is drawn.
+        if state.pictures.get(&url).is_none() {
+            state.pictures.put(&url, PictureState::Failed(why));
+            return Effects::event(Event::Pictures);
+        }
+        return Effects::none();
+    }
+
+    let asked = state.pictures.asked(&url);
+    let bigger = asked.is_none_or(|(w, h)| max_w > w || max_h > h);
+    match state.pictures.get(&url) {
+        Some(PictureState::Loading | PictureState::Failed(_)) => return Effects::none(),
+        // Here, and no bigger than it was drawn at last time.
+        Some(PictureState::Ready(_)) if !bigger => return Effects::none(),
+        // Here, but wanted larger than it was decoded at: asking again reads
+        // the cached file and decodes it at the new size.
+        _ => {}
+    }
+
+    let want = asked.map_or((max_w, max_h), |(w, h)| (w.max(max_w), h.max(max_h)));
+    state.pictures.asked.insert(url.clone(), want);
+    state.pictures.put(&url, PictureState::Loading);
+    state.picture_queue.push_back((url, want.0, want.1));
+    let mut effects = Effects::event(Event::Pictures);
+    effects.absorb(pump_pictures(state));
+    effects
+}
+
+/// Start as many queued pictures as the in-flight ceiling allows.
+fn pump_pictures(state: &mut State) -> Effects {
+    let mut effects = Effects::none();
+    while state.picture_inflight < super::pictures::PARALLEL {
+        let Some((url, max_w, max_h)) = state.picture_queue.pop_front() else {
+            break;
+        };
+        state.picture_inflight += 1;
+        effects.push_job(Job::Net(
+            NetJob::Picture {
+                url,
+                max_w,
+                max_h,
+                generation: state.picture_generation,
+            },
+            Lane::Background,
+        ));
+    }
+    effects
+}
+
+fn done_picture(
+    state: &mut State,
+    url: String,
+    result: Result<Arc<Picture>, String>,
+    generation: u64,
+) -> Effects {
+    state.picture_inflight = state.picture_inflight.saturating_sub(1);
+    if generation != state.picture_generation {
+        // The reader has moved on. What came back is not kept: it was asked
+        // for at a box that belonged to an article nobody is looking at.
+        return pump_pictures(state);
+    }
+    state.pictures.put(
+        &url,
+        match result {
+            Ok(picture) => PictureState::Ready(picture),
+            Err(why) => PictureState::Failed(why),
+        },
+    );
+    let mut effects = Effects::event(Event::Pictures);
+    effects.absorb(pump_pictures(state));
+    effects
+}
+
+/// Hand a picture to whatever shows pictures: the cached file where the
+/// bytes have arrived, so an image viewer opens rather than a browser.
+fn cmd_open_picture(state: &mut State, url: String) -> Effects {
+    let cached = match state.pictures.get(&url) {
+        Some(PictureState::Ready(picture)) => picture.path.clone(),
+        _ => None,
+    };
+    let source = match cached {
+        Some(path) => PictureSource::File(path),
+        None => PictureSource::Url(url),
+    };
+    Effects::job(Job::Net(
+        NetJob::Open(Target::Picture(source)), // NO-IO-HERE
+        Lane::Urgent,
+    ))
+}
+
+/// The reader has opened or closed an entry: whatever has not started is
+/// dropped, and what is in flight is dropped when it comes back.
+///
+/// What has already been decoded stays. Stepping `n` and `p` back over the
+/// last few articles is the case that decides whether a reader feels quick,
+/// and the pictures of those articles are already in hand.
+fn drop_picture_queue(state: &mut State) {
+    state.picture_generation += 1;
+    state.picture_queue.clear();
+}
+
 // ------------------------------------------------- feeds, folders, import ----
 
 fn done_feeds(state: &mut State, feeds: Vec<FeedRow>, folders: Vec<Folder>) -> Effects {
@@ -1091,11 +1325,16 @@ fn cmd_dismiss_import_offer(state: &mut State) -> Effects {
 
 fn done_retained(state: &mut State, retained: entries::Retained, at: Timestamp) -> Effects {
     state.last_retention = Some(at);
+    // Chained off retention rather than run on its own clock: both are
+    // "once a day, take away what is no longer worth keeping", and the
+    // pictures of an entry that has just been swept are exactly what the
+    // directory should stop holding.
+    let sweep = Job::Net(NetJob::SweepPictures, Lane::Background);
     if retained.by_age + retained.by_count == 0 {
-        return Effects::none();
+        return Effects::job(sweep);
     }
     Effects {
-        jobs: vec![Job::Db(DbJob::LoadFeeds), reload_page(state)],
+        jobs: vec![sweep, Job::Db(DbJob::LoadFeeds), reload_page(state)],
         events: Vec::new(),
     }
 }
@@ -1167,8 +1406,19 @@ fn cmd_set_setting(state: &mut State, setting: Setting) -> Effects {
             Effects::none()
         }
         Setting::Images(on) => {
+            if state.settings.images == on {
+                return Effects::none();
+            }
             state.settings.images = on;
-            Effects::none()
+            if on {
+                return Effects::none();
+            }
+            // Off means off at both ends: nothing further is fetched, and
+            // what was decoded is let go of rather than kept against the
+            // switch being turned back on.
+            drop_picture_queue(state);
+            state.pictures.clear();
+            Effects::event(Event::Pictures)
         }
         Setting::KeepDays(days) => {
             state.settings.keep_days = days;
@@ -1889,6 +2139,257 @@ mod tests {
     /// grepping this file's own source. `apply` runs under the one write
     /// lock, and a query or a request in here would hold it for the length
     /// of a round trip.
+    // ------------------------------------------------------- pictures ----
+
+    fn picture(path: Option<&str>) -> Arc<Picture> {
+        Arc::new(Picture {
+            image: Arc::new(starkit::image::RgbaImage::new(2, 2)),
+            natural: (64, 32),
+            path: path.map(std::path::PathBuf::from),
+        })
+    }
+
+    fn ask(s: &mut State, url: &str, w: u32, h: u32) -> Effects {
+        apply(
+            s,
+            Change::Command(Command::FetchPicture {
+                url: url.into(),
+                max_w: w,
+                max_h: h,
+            }),
+        )
+    }
+
+    fn arrived(s: &mut State, url: &str, picture: Arc<Picture>) -> Effects {
+        let generation = s.picture_generation;
+        apply(
+            s,
+            Change::Done(Done::Picture {
+                url: url.into(),
+                result: Ok(picture),
+                generation,
+            }),
+        )
+    }
+
+    /// The window sends this for every picture on screen on every frame, so
+    /// everything after the first ask has to cost nothing at all.
+    #[test]
+    fn fetch_picture_queues_one_job_and_asking_again_is_free() {
+        let mut s = state();
+        let url = "https://e.org/hero.png";
+        let effects = ask(&mut s, url, 640, 320);
+        assert!(matches!(
+            net_jobs(&effects).as_slice(),
+            [(
+                NetJob::Picture {
+                    max_w: 640,
+                    max_h: 320,
+                    ..
+                },
+                Lane::Background
+            )]
+        ));
+        assert!(matches!(s.pictures.get(url), Some(PictureState::Loading)));
+
+        for _ in 0..5 {
+            let again = ask(&mut s, url, 640, 320);
+            assert!(again.jobs.is_empty(), "{:?}", again.jobs);
+            assert!(again.events.is_empty());
+        }
+
+        let effects = arrived(&mut s, url, picture(None));
+        assert!(matches!(s.pictures.get(url), Some(PictureState::Ready(_))));
+        assert!(effects.events.iter().any(|e| matches!(e, Event::Pictures)));
+        assert_eq!(s.picture_inflight, 0);
+
+        // Still free at the same size, and a job again at a larger one --
+        // which is the reader being widened.
+        assert!(ask(&mut s, url, 640, 320).jobs.is_empty());
+        assert!(ask(&mut s, url, 320, 160).jobs.is_empty(), "smaller");
+        assert_eq!(net_jobs(&ask(&mut s, url, 900, 320)).len(), 1);
+
+        // And a failure is not retried on the next frame either.
+        let generation = s.picture_generation;
+        apply(
+            &mut s,
+            Change::Done(Done::Picture {
+                url: url.into(),
+                result: Err("403".into()),
+                generation,
+            }),
+        );
+        assert!(matches!(s.pictures.get(url), Some(PictureState::Failed(_))));
+        assert!(ask(&mut s, url, 1600, 900).jobs.is_empty());
+    }
+
+    /// `data:` and `http:` are answered where they are asked about. The
+    /// agent refuses plaintext, so a job would be a request that could only
+    /// fail, and a `data:` URI is not a request at all.
+    #[test]
+    fn a_non_https_picture_fails_without_a_job() {
+        let mut s = state();
+        for url in [
+            "data:image/png;base64,iVBORw0KGgo=",
+            "http://e.org/a.png",
+            "not a url",
+        ] {
+            let effects = ask(&mut s, url, 640, 320);
+            assert!(effects.jobs.is_empty(), "{url}: {:?}", effects.jobs);
+            assert!(
+                matches!(s.pictures.get(url), Some(PictureState::Failed(_))),
+                "{url}: {:?}",
+                s.pictures.get(url)
+            );
+            // And the second frame says nothing at all about it.
+            assert!(ask(&mut s, url, 640, 320).events.is_empty());
+        }
+    }
+
+    #[test]
+    fn images_off_asks_nothing() {
+        let mut s = state();
+        let url = "https://e.org/hero.png";
+        ask(&mut s, url, 640, 320);
+        arrived(&mut s, url, picture(None));
+
+        let effects = apply(
+            &mut s,
+            Change::Command(Command::SetSetting(Setting::Images(false))),
+        );
+        assert!(effects.events.iter().any(|e| matches!(e, Event::Pictures)));
+        assert!(s.pictures.is_empty(), "what was decoded was let go of");
+        assert!(s.picture_queue.is_empty());
+        assert!(ask(&mut s, url, 640, 320).jobs.is_empty());
+
+        apply(
+            &mut s,
+            Change::Command(Command::SetSetting(Setting::Images(true))),
+        );
+        assert_eq!(net_jobs(&ask(&mut s, url, 640, 320)).len(), 1);
+    }
+
+    /// Holding `n` down past six articles must not queue the pictures of all
+    /// six. What has not started is dropped; what has been decoded stays,
+    /// because `p` comes straight back to it.
+    #[test]
+    fn opening_another_entry_drops_the_queue() {
+        let mut s = state();
+        deliver(&mut s, vec![row(1, 1, "one"), row(2, 1, "two")], 2, 0);
+        for n in 0..6 {
+            ask(&mut s, &format!("https://e.org/{n}.png"), 640, 320);
+        }
+        assert_eq!(s.picture_inflight, super::super::pictures::PARALLEL);
+        assert!(!s.picture_queue.is_empty());
+        let was = s.picture_generation;
+
+        apply(&mut s, Change::Command(Command::OpenEntry(EntryId(2))));
+        assert!(s.picture_queue.is_empty());
+        assert!(s.picture_generation > was);
+        assert!(!s.pictures.is_empty(), "what is decoded is kept");
+
+        let was = s.picture_generation;
+        apply(&mut s, Change::Command(Command::CloseEntry));
+        assert!(s.picture_generation > was);
+    }
+
+    #[test]
+    fn a_stale_result_is_ignored() {
+        let mut s = state();
+        let url = "https://e.org/hero.png";
+        ask(&mut s, url, 640, 320);
+        let stale = s.picture_generation;
+        s.picture_generation += 1;
+
+        let effects = apply(
+            &mut s,
+            Change::Done(Done::Picture {
+                url: url.into(),
+                result: Ok(picture(None)),
+                generation: stale,
+            }),
+        );
+        assert!(effects.events.is_empty(), "{:?}", effects.events);
+        assert!(
+            matches!(s.pictures.get(url), Some(PictureState::Loading)),
+            "a picture asked for at another article's width was kept"
+        );
+        assert_eq!(s.picture_inflight, 0, "the slot came back either way");
+    }
+
+    /// The store is bounded, and what goes is what was looked at longest
+    /// ago -- the bytes are still on disk, so coming back costs a decode.
+    #[test]
+    fn the_decoded_pictures_are_bounded() {
+        let mut s = state();
+        let capacity = super::super::pictures::CAPACITY;
+        for n in 0..capacity + 4 {
+            let url = format!("https://e.org/{n}.png");
+            ask(&mut s, &url, 640, 320);
+            arrived(&mut s, &url, picture(None));
+        }
+        assert_eq!(s.pictures.len(), capacity);
+        assert!(s.pictures.get("https://e.org/0.png").is_none());
+        assert!(s.pictures.get("https://e.org/0.png").is_none());
+        assert!(s.pictures.asked("https://e.org/0.png").is_none());
+        assert!(s
+            .pictures
+            .get(&format!("https://e.org/{}.png", capacity + 3))
+            .is_some());
+    }
+
+    /// A click opens the file, which is what makes an image viewer open
+    /// rather than a browser; before the bytes arrive there is only the URL.
+    #[test]
+    fn open_picture_prefers_the_cached_file() {
+        let mut s = state();
+        let url = "https://e.org/hero.png";
+        let effects = apply(&mut s, Change::Command(Command::OpenPicture(url.into())));
+        assert!(matches!(
+            net_jobs(&effects).as_slice(),
+            [(
+                NetJob::Open(Target::Picture(PictureSource::Url(u))),
+                Lane::Urgent
+            )] if u == url
+        ));
+
+        ask(&mut s, url, 640, 320);
+        arrived(&mut s, url, picture(Some("/cache/pictures/abc.png")));
+        let effects = apply(&mut s, Change::Command(Command::OpenPicture(url.into())));
+        assert!(
+            matches!(
+                net_jobs(&effects).as_slice(),
+                [(
+                    NetJob::Open(Target::Picture(PictureSource::File(p))),
+                    Lane::Urgent
+                )] if p == std::path::Path::new("/cache/pictures/abc.png")
+            ),
+            "{:?}",
+            effects.jobs
+        );
+    }
+
+    /// The daily sweep of entries takes the picture cache with it: they are
+    /// the same question asked of two directories.
+    #[test]
+    fn retention_chains_a_sweep() {
+        let mut s = state();
+        let effects = apply(
+            &mut s,
+            Change::Done(Done::Retained {
+                retained: entries::Retained::default(),
+                at: crate::wire::testing::now(),
+            }),
+        );
+        assert!(
+            net_jobs(&effects).iter().any(
+                |(job, lane)| matches!(job, NetJob::SweepPictures) && *lane == Lane::Background
+            ),
+            "{:?}",
+            effects.jobs
+        );
+    }
+
     #[test]
     fn apply_does_no_io() {
         // NO-IO-HERE

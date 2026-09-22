@@ -183,6 +183,21 @@ pub enum NetJob {
     YtSubs {
         cookies_from_browser: Option<String>,
     },
+    /// One picture from inside an article: the cached file if there is one,
+    /// a request if there is not, and a decode either way. On the background
+    /// lane, behind a generation of its own so that closing the article
+    /// drops what has not started.
+    Picture {
+        url: String,
+        max_w: u32,
+        max_h: u32,
+        generation: u64,
+    },
+    /// Take the picture cache back under its ceiling. Chained off the daily
+    /// retention sweep, and on a net thread rather than the database one
+    /// because it is a directory walk and the database thread is the only
+    /// thread that writes.
+    SweepPictures,
     /// Hand a link to the browser or the player. Net work only in the sense
     /// that it leaves the program; it is here because it must not block the
     /// one thread that writes.
@@ -264,6 +279,15 @@ pub enum Done {
         retained: entries::Retained,
         at: Timestamp,
     },
+    Picture {
+        url: String,
+        /// The pixels, or a sentence saying why there are none. Everything
+        /// that can fail here ends up in the same place -- the line drawn
+        /// where the picture would have been -- so there is nothing for a
+        /// type to tell apart.
+        result: Result<Arc<super::pictures::Picture>, String>,
+        generation: u64,
+    },
     /// Another process committed to the file -- a `starwire fetch` from a
     /// timer while the window was open.
     External,
@@ -335,6 +359,17 @@ pub fn finish(done: Done, state: &Arc<RwLock<State>>, events: &EventSink, sender
 pub fn is_stale(state: &Arc<RwLock<State>>, generation: u64) -> bool {
     let s = state.read().unwrap_or_else(|e| e.into_inner());
     generation < s.refresh_generation
+}
+
+/// The same question for a picture, which counts on its own generation.
+///
+/// Separate because the two are cancelled by different things: a refresh is
+/// cancelled by `CancelRefresh`, and a picture by the reader opening
+/// something else -- which happens with every `n`, and must not drop a
+/// refresh of forty-one feeds with it.
+pub fn is_stale_picture(state: &Arc<RwLock<State>>, generation: u64) -> bool {
+    let s = state.read().unwrap_or_else(|e| e.into_inner());
+    generation < s.picture_generation
 }
 
 fn failed(what: &'static str, e: impl std::fmt::Display) -> Vec<Done> {
@@ -812,6 +847,38 @@ pub fn perform_net(
                 }],
                 Err(e) => failed("youtube", e),
             }
+        }
+        NetJob::Picture {
+            url,
+            max_w,
+            max_h,
+            generation,
+        } => {
+            if is_stale_picture(state, generation) {
+                return Vec::new();
+            }
+            let result =
+                super::pictures::fetch(http, cfg.pictures_dir.as_deref(), &url, max_w, max_h)
+                    .map(Arc::new);
+            if let Err(e) = &result {
+                tracing::debug!("picture {url}: {e}");
+            }
+            vec![Done::Picture {
+                url,
+                result,
+                generation,
+            }]
+        }
+        NetJob::SweepPictures => {
+            if let Some(dir) = cfg.pictures_dir.as_deref() {
+                super::pictures::sweep(
+                    dir,
+                    cfg.articles.pictures_mib.saturating_mul(1024 * 1024),
+                    cfg.articles.keep_days,
+                    std::time::SystemTime::now(),
+                );
+            }
+            Vec::new()
         }
         NetJob::Open(target) => match open::open(&target, &cfg.player) {
             Ok(()) => Vec::new(),
