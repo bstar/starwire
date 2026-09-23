@@ -96,7 +96,7 @@
         pkgs = nixpkgs.legacyPackages.${system};
 
         # One version, read rather than repeated. scripts/check-version.sh
-        # asserts the copies that cannot be derived (Cargo.lock, PKGBUILD).
+        # asserts the copies that cannot be derived (Cargo.lock).
         cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
 
         # There are no buildInputs and no nativeBuildInputs, which is worth
@@ -206,9 +206,7 @@
             # The tests that use yt-dlp skip when it is not on PATH.
             yt-dlp
             mpv
-          ])
-          # Only ever used to build a .deb, which only happens on Linux.
-          ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.cargo-deb;
+          ]);
 
           shellHook = ''
             echo "STAR/WIRE devshell · rustc $(rustc --version | cut -d' ' -f2)"

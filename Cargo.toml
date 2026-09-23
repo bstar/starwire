@@ -208,27 +208,3 @@ strip = true
 # -O0 is the other half of this.
 [profile.dev.package."*"]
 opt-level = 2
-
-[package.metadata.deb]
-maintainer = "bstar <bob@dinicolas.com>"
-copyright = "2026, bstar"
-license-file = ["LICENSE", "0"]
-extended-description = """\
-A terminal news reader in the STAR family: feeds and folders stack up as a
-column that folds behind you, and the article you open is the whole page,
-pulled out of it and wrapped as clean markdown in the terminal rather than
-handed to a browser. YouTube channels are feeds too."""
-section = "utils"
-priority = "optional"
-assets = [
-    ["target/release/starwire", "usr/bin/", "755"],
-    ["README.md", "usr/share/doc/starwire/README.md", "644"],
-    ["packaging/starwire.desktop", "usr/share/applications/starwire.desktop", "644"],
-    ["packaging/starwire.png", "usr/share/icons/hicolor/256x256/apps/starwire.png", "644"],
-    ["packaging/starwire.svg", "usr/share/icons/hicolor/scalable/apps/starwire.svg", "644"],
-]
-# $auto resolves the real sonames from the built binary, which here is the C
-# runtime and libgcc and nothing else -- so the package has to be built on a
-# Debian-like host. Building it on NixOS produces a package with no dependency
-# information at all.
-depends = "$auto"

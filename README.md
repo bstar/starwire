@@ -2,8 +2,6 @@
 
 [![ci](https://github.com/bstar/starwire/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bstar/starwire/actions/workflows/ci.yml)
 [![nix](https://github.com/bstar/starwire/actions/workflows/nix.yml/badge.svg?branch=main)](https://github.com/bstar/starwire/actions/workflows/nix.yml)
-[![debian](https://github.com/bstar/starwire/actions/workflows/debian.yml/badge.svg?branch=main)](https://github.com/bstar/starwire/actions/workflows/debian.yml)
-[![arch](https://github.com/bstar/starwire/actions/workflows/arch.yml/badge.svg?branch=main)](https://github.com/bstar/starwire/actions/workflows/arch.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A terminal news reader in the STAR family. Most readers hand you a list of
@@ -35,10 +33,8 @@ repository and this commit:
 
 | File | For |
 | --- | --- |
-| `starwire-<version>-x86_64.AppImage` | anything, with nothing installed first |
-| `starwire_<version>-1~<release>_amd64.deb` | Debian and Ubuntu, one per generation |
-| `starwire-<version>-x86_64-linux-gnu.tar.gz` | a portable build for everything else |
-| `starwire-<version>.tar.gz` | the source, which `packaging/PKGBUILD` builds on Arch |
+| `starwire-<version>-x86_64.AppImage` | Linux x86_64 |
+| `starwire-<version>-aarch64-apple-darwin.tar.gz` | Apple Silicon macOS |
 
 [Installing](docs/installing.md) covers every route, including the
 home-manager module and building from source. There are no system libraries to

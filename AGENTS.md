@@ -354,3 +354,11 @@ of protocol details still waiting on one. Specifically, still unverified:
 - **The clipboard over ssh.** `y` copies through `arboard`, which needs a
   display at the other end. The failure path is a note in the status line and
   is tested; the success path over a forwarded display is not.
+
+## Release targets
+
+Release Linux through Nix and AppImage, and macOS through the native Apple
+Silicon archive (Nix remains available there too). Do not restore Debian, Arch
+or standalone Linux tarball build jobs. `scripts/build-dist.sh` accepts only
+`nix`, `appimage` and `macos`; branch release dispatches build artifacts without
+publishing, while version tags create a draft release.

@@ -30,17 +30,16 @@ setting one key in `[fetch]` leaves the rest of `[fetch]` alone.
 
 ## A release build
 
-Packages are on the
-[releases page](https://github.com/bstar/starwire/releases/latest). Every file
-there is built by CI, hashed into `SHA256SUMS` over the bytes actually
-uploaded, and attested to this repository and the commit it was built from.
+The [releases page](https://github.com/bstar/starwire/releases/latest) carries:
 
-| File | What it is |
+| File | Platform |
 | --- | --- |
-| `starwire-<version>-x86_64.AppImage` | one file, nothing installed first. `chmod +x` it and run it. |
-| `starwire_<version>-1~<release>_amd64.deb` | one per Debian generation — `bookworm`, `trixie`, `ubuntu24.04` — because they differ only in the glibc they were built against. |
-| `starwire-<version>-x86_64-linux-gnu.tar.gz` | a portable build for any other distribution, built against the oldest glibc still worth supporting. |
-| `starwire-<version>.tar.gz` | the source. This is what `packaging/PKGBUILD` builds from; the Arch package is built and tested in CI but not published, so on Arch you build it yourself. |
+| `starwire-<version>-x86_64.AppImage` | Linux x86_64; make executable and run. |
+| `starwire-<version>-aarch64-apple-darwin.tar.gz` | Apple Silicon macOS; extract and run the enclosed executable. Unsigned. |
+
+Nix is the Linux aarch64 route and also supports Apple Silicon macOS.
+If FUSE is unavailable, run the AppImage with `--appimage-extract-and-run`.
+Debian, Arch and standalone Linux tarballs are no longer release targets.
 
 ## From source
 
