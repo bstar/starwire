@@ -26,6 +26,11 @@ use std::time::{Duration, Instant};
 
 use url::Url;
 
+mod resume;
+pub use resume::{RequestHistory, RequestScope};
+#[cfg(test)]
+mod resume_tests;
+
 /// What a request may ask for beyond the URL.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RequestOptions {
@@ -360,112 +365,118 @@ impl Live {
 impl Http for Live {
     fn get(&self, url: &Url, options: &RequestOptions) -> Result<Response, NetError> {
         let mut target = url.clone();
-
         for _ in 0..=MAX_REDIRECTS {
-            // Held for the length of this hop and dropped before the next, so
-            // every host in a chain waits its own turn.
-            let lease = self
-                .politeness
-                .lease(target.host_str().unwrap_or(""), options.host_gap)
-                .inspect_err(|e| {
-                    if let NetError::NotBefore(until) = e {
-                        note_deferral(*until);
-                    }
-                })?;
-
-            let mut req = self.agent.get(target.as_str());
-            if let Some(secs) = options.timeout_secs {
-                // Per request rather than per agent, because there is one
-                // agent and one connection pool for feeds and pages both.
-                req = req
-                    .config()
-                    .timeout_global(Some(Duration::from_secs(secs.max(1))))
-                    .build();
-            }
-            let (accept, accept_language) = accept_headers(options);
-            if let Some(accept) = accept {
-                req = req.header("Accept", accept);
-            }
-            if let Some(language) = accept_language {
-                req = req.header("Accept-Language", language);
-            }
-            if let Some(user_agent) = &options.user_agent {
-                // Overrides the agent's own rather than needing a second
-                // agent: `ureq` adds the configured user agent only to a
-                // request that carries no header of its own.
-                req = req.header("User-Agent", user_agent);
-            }
-            if let Some(etag) = &options.etag {
-                req = req.header("If-None-Match", etag);
-            }
-            if let Some(lm) = &options.last_modified {
-                req = req.header("If-Modified-Since", lm);
-            }
-
-            let response = req.call().map_err(|e| NetError::Transport(e.to_string()))?;
-            let status = response.status().as_u16();
-            let header = |name: &str| {
-                response
-                    .headers()
-                    .get(name)
-                    .and_then(|v| v.to_str().ok())
-                    .map(str::to_string)
-            };
-            let etag = header("etag");
-            let last_modified = header("last-modified");
-            let content_type = header("content-type");
-            let retry_after = header("retry-after").and_then(|v| v.trim().parse::<i64>().ok());
-            let location = header("location");
-
-            // What a server says about its own limiter, where it is one this
-            // believes. Reddit answers the first request of the minute with
-            // nothing left and forty seconds to wait.
-            let host = target.host_str().unwrap_or("").to_string();
-            if self.politeness.honours_ratelimit_reset(&host) {
-                if let Some(wait) =
-                    ratelimit_wait(header("x-ratelimit-remaining"), header("x-ratelimit-reset"))
-                {
-                    self.politeness.hold(&host, wait);
-                }
-            }
-
-            if let (true, Some(location)) = (is_redirect(status), location.as_deref()) {
+            let hop = resume::request(&target, options, || self.get_hop(&target, options))?;
+            if let (true, Some(location)) =
+                (is_redirect(hop.response.status), hop.location.as_deref())
+            {
                 let next = target
                     .join(location.trim())
                     .map_err(|e| NetError::Transport(format!("{location}: {e}")))?;
                 if is_a_wall(&next) {
                     return Err(NetError::Wall(next.to_string()));
                 }
-                // The body of a redirect is a courtesy page nobody reads, and
-                // the connection is wanted back.
-                drop(response);
-                drop(lease);
                 target = next;
                 continue;
             }
+            return Ok(hop.response);
+        }
+        Err(NetError::TooManyRedirects(MAX_REDIRECTS))
+    }
+}
 
-            // A 304 has no body by definition, and asking for one on a
-            // connection the server has already finished with is how a read
-            // hangs.
-            let body = if status == 304 {
-                Vec::new()
-            } else {
-                let limit = options.max_bytes.max(1);
-                let body = response
-                    .into_body()
-                    .into_with_config()
-                    // One byte over the limit, so that a body exactly at the
-                    // limit is not mistaken for one that was cut short.
-                    .limit(limit + 1)
-                    .read_to_vec()
-                    .map_err(|e| NetError::Transport(e.to_string()))?;
-                if body.len() as u64 > limit {
-                    return Err(NetError::TooLarge(limit));
+impl Live {
+    fn get_hop(&self, target: &Url, options: &RequestOptions) -> Result<resume::Hop, NetError> {
+        // Held for the length of this hop and dropped before the next, so
+        // every host in a chain waits its own turn.
+        let _lease = self
+            .politeness
+            .lease(target.host_str().unwrap_or(""), options.host_gap)
+            .inspect_err(|e| {
+                if let NetError::NotBefore(until) = e {
+                    note_deferral(*until);
                 }
-                body
-            };
+            })?;
 
-            return Ok(Response {
+        let mut req = self.agent.get(target.as_str());
+        if let Some(secs) = options.timeout_secs {
+            // Per request rather than per agent, because there is one
+            // agent and one connection pool for feeds and pages both.
+            req = req
+                .config()
+                .timeout_global(Some(Duration::from_secs(secs.max(1))))
+                .build();
+        }
+        let (accept, accept_language) = accept_headers(options);
+        if let Some(accept) = accept {
+            req = req.header("Accept", accept);
+        }
+        if let Some(language) = accept_language {
+            req = req.header("Accept-Language", language);
+        }
+        if let Some(user_agent) = &options.user_agent {
+            // Overrides the agent's own rather than needing a second
+            // agent: `ureq` adds the configured user agent only to a
+            // request that carries no header of its own.
+            req = req.header("User-Agent", user_agent);
+        }
+        if let Some(etag) = &options.etag {
+            req = req.header("If-None-Match", etag);
+        }
+        if let Some(lm) = &options.last_modified {
+            req = req.header("If-Modified-Since", lm);
+        }
+
+        let response = req.call().map_err(|e| NetError::Transport(e.to_string()))?;
+        let status = response.status().as_u16();
+        let header = |name: &str| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+        };
+        let etag = header("etag");
+        let last_modified = header("last-modified");
+        let content_type = header("content-type");
+        let retry_after = header("retry-after").and_then(|v| v.trim().parse::<i64>().ok());
+        let location = header("location");
+
+        // What a server says about its own limiter, where it is one this
+        // believes. Reddit answers the first request of the minute with
+        // nothing left and forty seconds to wait.
+        let host = target.host_str().unwrap_or("").to_string();
+        if self.politeness.honours_ratelimit_reset(&host) {
+            if let Some(wait) =
+                ratelimit_wait(header("x-ratelimit-remaining"), header("x-ratelimit-reset"))
+            {
+                self.politeness.hold(&host, wait);
+            }
+        }
+
+        // A 304 has no body by definition, and asking for one on a
+        // connection the server has already finished with is how a read
+        // hangs.
+        let body = if status == 304 || (is_redirect(status) && location.is_some()) {
+            Vec::new()
+        } else {
+            let limit = options.max_bytes.max(1);
+            let body = response
+                .into_body()
+                .into_with_config()
+                // One byte over the limit, so that a body exactly at the
+                // limit is not mistaken for one that was cut short.
+                .limit(limit + 1)
+                .read_to_vec()
+                .map_err(|e| NetError::Transport(e.to_string()))?;
+            if body.len() as u64 > limit {
+                return Err(NetError::TooLarge(limit));
+            }
+            body
+        };
+
+        Ok(resume::Hop {
+            response: Response {
                 status,
                 body,
                 etag,
@@ -473,10 +484,9 @@ impl Http for Live {
                 content_type,
                 retry_after,
                 final_url: target.to_string(),
-            });
-        }
-
-        Err(NetError::TooManyRedirects(MAX_REDIRECTS))
+            },
+            location,
+        })
     }
 }
 

@@ -169,6 +169,13 @@ them in one feed list stopped the lane for minutes — with the reader's own
 pictures queued behind it. `starwire fetch` from a timer uses
 `Live::patient` instead, because a subcommand has no clock to defer to.
 
+Deferred jobs carry a bounded, in-memory history of completed HTTP hops
+(`net::resume`, at most 64 hops / 32 MiB of bodies per job). Retries replay
+those responses with their original request options before making new requests;
+otherwise a same-host redirect or browser retry restarts its own host delay
+forever. History travels with the job between workers and is discarded on
+completion or cancellation. It is never shared between separate jobs.
+
 Three kinds of entry are never fetched, and `wire::extract::policy` is where
 that is decided: a video (the description is the text, and `mpv` is the
 point), a Reddit post (the feed carries the body, the link is a comment

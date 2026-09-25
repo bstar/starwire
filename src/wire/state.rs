@@ -1462,6 +1462,7 @@ fn done_deferred(state: &mut State, job: NetJob, lane: Lane, until: std::time::I
 /// to cancel: the reader looking at an article is not what `R` interrupted.
 fn is_behind_refresh(job: &NetJob, generation: u64) -> bool {
     match job {
+        NetJob::Resume { job, .. } => is_behind_refresh(job, generation),
         NetJob::Fetch { generation: g, .. } | NetJob::Extract { generation: g, .. } => {
             *g < generation
         }
@@ -2420,6 +2421,17 @@ mod tests {
             }),
         );
         assert_eq!(s.deferred.len(), 2);
+
+        // A real deferred job also carries its completed HTTP hops.
+        let (_, fetch, lane) = s.deferred.remove(0);
+        s.deferred.push((
+            at,
+            NetJob::Resume {
+                job: Box::new(fetch),
+                history: super::super::net::RequestHistory::default(),
+            },
+            lane,
+        ));
 
         apply(&mut s, Change::Command(Command::CancelRefresh));
         assert!(

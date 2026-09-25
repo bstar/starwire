@@ -177,6 +177,11 @@ pub enum DbJob {
 /// Work for a net thread.
 #[derive(Debug)]
 pub enum NetJob {
+    /// An unfinished job and the HTTP hops it already completed.
+    Resume {
+        job: Box<NetJob>,
+        history: super::net::RequestHistory,
+    },
     Fetch {
         feed: FeedId,
         url: String,
@@ -832,12 +837,25 @@ pub fn perform_net(
     cfg: &WireConfig,
     state: &Arc<RwLock<State>>,
 ) -> Vec<Done> {
+    let (job, history) = match job {
+        NetJob::Resume { job, history } => (*job, history),
+        job => (job, super::net::RequestHistory::default()),
+    };
+    let requests = super::net::RequestScope::new(history);
     super::net::clear_deferral();
     let done = run_net(&job, http, cfg, state);
+    let history = requests.finish();
     match super::net::take_deferral() {
         Some(until) => {
             tracing::debug!(?job, ?lane, "deferred: the host is not askable yet");
-            vec![Done::Deferred { job, lane, until }]
+            vec![Done::Deferred {
+                job: NetJob::Resume {
+                    job: Box::new(job),
+                    history,
+                },
+                lane,
+                until,
+            }]
         }
         None => done,
     }
@@ -858,6 +876,7 @@ fn run_net(
     state: &Arc<RwLock<State>>,
 ) -> Vec<Done> {
     match job {
+        NetJob::Resume { job, .. } => run_net(job, http, cfg, state),
         NetJob::Fetch {
             feed,
             url,
