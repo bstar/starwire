@@ -2938,8 +2938,8 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "starkit"
-version = "0.3.0"
-source = "git+https://github.com/bstar/starkit?rev=ff7ae1a1a220daaad893ce29b90be874cc8c72ac#ff7ae1a1a220daaad893ce29b90be874cc8c72ac"
+version = "0.6.1"
+source = "git+https://github.com/bstar/starkit?tag=v0.6.1#21eb2e4b11a5b7fdd9848f00a13586ade32dd864"
 dependencies = [
  "anyhow",
  "crossterm",
