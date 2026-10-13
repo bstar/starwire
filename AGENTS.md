@@ -79,6 +79,13 @@ else.
 Every public `starkit` item now has **four** consumers — check STAR/AMP,
 STAR/CORD and STAR/FOLD before changing a signature.
 
+## Shared panes
+
+`ui/layout.rs` supplies application sizing/opening policy to KIT's `panes`
+engine. Solved rectangles drive rendering, hit testing and focus. User collapse
+and viewport fallback have separate reasons. Keep the core model independent
+of presentation and preserve the application's accordion/reader behavior.
+
 ## Nothing under src/wire/ draws
 
 No `ratatui`, no `crossterm`, no `crate::ui` anywhere under `src/wire/`. A test

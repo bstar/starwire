@@ -17,8 +17,8 @@
 //! ```
 //!
 //! Every module is always there, in the order the feed list is drilled
-//! through, and the arithmetic below is the whole of it: a plain top-down
-//! stack, no tree and no `Layout`.
+//! through. The app supplies reader/peek policy; KIT's responsive pane tree
+//! owns allocation, collapse reasons, shared hit geometry and focus traversal.
 //!
 //! ## Who gets the spare rows
 //!
@@ -45,6 +45,7 @@
 //! caller draws one line saying so, in `theme.error`.
 
 use starkit::chrome::header;
+use starkit::panes::{self, Focus, Node, Size, Visibility};
 use starkit::ratatui::layout::Rect;
 
 use super::panels::{ModuleId, COLUMN};
@@ -82,6 +83,7 @@ pub struct Regions {
     /// One rect per module, indexed by [`ModuleId::index`], in [`COLUMN`]
     /// order. Every one of them is the full width of the area.
     modules: [Rect; 3],
+    pub panes: panes::Layout<ModuleId>,
     pub status: Rect,
 }
 
@@ -92,10 +94,7 @@ impl Regions {
 
     /// Which module a cell is in.
     pub fn hit(&self, x: u16, y: u16) -> Option<ModuleId> {
-        COLUMN.into_iter().find(|m| {
-            let r = self.rect_of(*m);
-            x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height
-        })
+        self.panes.hit(x, y)
     }
 }
 
@@ -103,7 +102,7 @@ impl Regions {
 /// article is behind it, and the last answer.
 #[derive(Debug, Clone)]
 pub struct LayoutState {
-    focus: ModuleId,
+    focus: Focus<ModuleId>,
     /// `[ui] list_rows`: the whole height a focused list opens to while an
     /// article is open, borders and header included. Twelve by default,
     /// which is [`EXPANDED_MIN_ROWS`] -- the smallest peek is no peek at
@@ -119,7 +118,7 @@ pub struct LayoutState {
 impl LayoutState {
     pub fn new(list_rows: u16) -> Self {
         Self {
-            focus: ModuleId::Sources,
+            focus: Focus::new(Some(ModuleId::Sources)),
             list_rows,
             reader_open: false,
             last: None,
@@ -153,74 +152,64 @@ impl LayoutState {
             ..area
         };
 
-        // Everyone at their floor is the baseline; `room` is how much taller
-        // than that the body is. The `MIN_ROWS` check above guarantees this
-        // does not underflow.
-        let room = body.height - EXPANDED_MIN_ROWS - 2 * COLLAPSED_ROWS;
-
-        // Rule 3: a focused list with an article open is capped, and what it
-        // does not take the reader does. Rules 1 and 2 are the two ways the
-        // focused module takes the lot.
-        let peeking = reader_open && self.focus != ModuleId::Reader;
-        let focus_extra = if peeking {
-            self.list_rows.saturating_sub(EXPANDED_MIN_ROWS).min(room)
-        } else {
-            room
-        };
-        let reader_extra = if peeking { room - focus_extra } else { 0 };
-
-        let height = |m: ModuleId| {
-            let floor = if m == self.focus {
-                EXPANDED_MIN_ROWS
-            } else {
-                COLLAPSED_ROWS
-            };
-            let extra = if m == self.focus {
-                focus_extra
-            } else if m == ModuleId::Reader {
-                reader_extra
-            } else {
-                0
-            };
-            floor + extra
-        };
-
-        let mut modules = [Rect::new(0, 0, 0, 0); 3];
-        let mut y = body.y;
-        for m in COLUMN {
-            let h = height(m);
-            modules[m.index()] = Rect {
-                y,
-                height: h,
-                ..body
-            };
-            y += h;
-        }
-
+        let peeking = reader_open && self.focus() != ModuleId::Reader;
+        let children = COLUMN
+            .into_iter()
+            .map(|id| {
+                if id == self.focus() {
+                    let size = if peeking {
+                        Size::bounded(
+                            EXPANDED_MIN_ROWS,
+                            self.list_rows.max(EXPANDED_MIN_ROWS),
+                            self.list_rows.max(EXPANDED_MIN_ROWS),
+                        )
+                    } else {
+                        Size::fill(EXPANDED_MIN_ROWS)
+                    };
+                    Node::pane(id).height(size).priority(2)
+                } else if id == ModuleId::Reader && peeking {
+                    Node::pane(id).height(Size::fill(COLLAPSED_ROWS))
+                } else {
+                    Node::pane(id)
+                        .visibility(Visibility::Collapsed)
+                        .compact(Size::fill(1), Size::fixed(COLLAPSED_ROWS))
+                }
+            })
+            .collect();
+        let panes = Node::column(children)
+            .layout(body)
+            .expect("unique application pane IDs");
+        let modules = COLUMN.map(|id| panes.rect_of(id).unwrap_or_default());
+        self.focus.reconcile(&panes);
         self.last = Some(Regions {
             area,
             modules,
+            panes,
             status,
         });
         self.last.as_ref()
     }
 
     pub fn focus(&self) -> ModuleId {
-        self.focus
+        self.focus.active().unwrap_or(ModuleId::Sources)
     }
 
     pub fn focus_set(&mut self, m: ModuleId) {
-        self.focus = m;
+        self.focus.request(m);
     }
 
     pub fn focus_next(&mut self) {
-        let i = (self.focus.index() + 1) % COLUMN.len();
-        self.focus_set(COLUMN[i]);
+        self.step_focus(true);
     }
-
     pub fn focus_prev(&mut self) {
-        let i = (self.focus.index() + COLUMN.len() - 1) % COLUMN.len();
-        self.focus_set(COLUMN[i]);
+        self.step_focus(false);
+    }
+    fn step_focus(&mut self, forward: bool) {
+        if let Some(last) = &self.last {
+            self.focus.step(&last.panes, forward);
+        } else {
+            self.focus.step_in(&COLUMN, forward);
+        }
     }
 
     /// Whether `m` is drawing more than its one folded line right now.
@@ -229,8 +218,8 @@ impl LayoutState {
     /// keyboard: that is the peek.
     pub fn is_open(&self, m: ModuleId) -> bool {
         match m {
-            ModuleId::Reader => self.focus == ModuleId::Reader || self.reader_open,
-            _ => self.focus == m,
+            ModuleId::Reader => self.focus() == ModuleId::Reader || self.reader_open,
+            _ => self.focus() == m,
         }
     }
 }
@@ -284,7 +273,7 @@ mod tests {
                     for reader_open in [false, true] {
                         for list_rows in [0u16, 4, 12, 40] {
                             let mut s = LayoutState::new(list_rows);
-                            s.focus = focus;
+                            s.focus_set(focus);
                             let full = Rect::new(0, 0, width, height);
                             let Some(r) = s.regions(full, (0, 0), reader_open).cloned() else {
                                 assert!(
@@ -359,7 +348,7 @@ mod tests {
         for focus in COLUMN {
             for reader_open in [false, true] {
                 let mut s = LayoutState::new(40);
-                s.focus = focus;
+                s.focus_set(focus);
                 let r = s
                     .regions(Rect::new(0, 0, MIN_COLS, MIN_ROWS), (0, 0), reader_open)
                     .cloned()
@@ -381,7 +370,7 @@ mod tests {
     fn the_reader_focused_takes_the_room() {
         for reader_open in [false, true] {
             let mut s = state();
-            s.focus = ModuleId::Reader;
+            s.focus_set(ModuleId::Reader);
             let r = s
                 .regions(Rect::new(0, 0, 100, 40), (0, 0), reader_open)
                 .cloned()
@@ -402,7 +391,7 @@ mod tests {
     fn a_focused_list_with_nothing_open_takes_the_room() {
         for focus in [ModuleId::Sources, ModuleId::Entries] {
             let mut s = state();
-            s.focus = focus;
+            s.focus_set(focus);
             let r = s
                 .regions(Rect::new(0, 0, 100, 40), (0, 0), false)
                 .cloned()
@@ -422,7 +411,7 @@ mod tests {
         let full = Rect::new(0, 0, 100, 40);
 
         let mut s = LayoutState::new(16);
-        s.focus = ModuleId::Entries;
+        s.focus_set(ModuleId::Entries);
         let r = s.regions(full, (0, 0), true).cloned().unwrap();
         assert_eq!(r.rect_of(ModuleId::Entries).height, 16, "the peek's cap");
         assert_eq!(r.rect_of(ModuleId::Sources).height, COLLAPSED_ROWS);
@@ -449,12 +438,12 @@ mod tests {
         let full = Rect::new(0, 0, 100, 40);
 
         let mut s = LayoutState::new(2);
-        s.focus = ModuleId::Entries;
+        s.focus_set(ModuleId::Entries);
         let r = s.regions(full, (0, 0), true).cloned().unwrap();
         assert_eq!(r.rect_of(ModuleId::Entries).height, EXPANDED_MIN_ROWS);
 
         let mut s = LayoutState::new(200);
-        s.focus = ModuleId::Entries;
+        s.focus_set(ModuleId::Entries);
         let r = s.regions(full, (0, 0), true).cloned().unwrap();
         assert_eq!(r.rect_of(ModuleId::Entries).height, 39 - 2 * COLLAPSED_ROWS);
         assert_eq!(r.rect_of(ModuleId::Reader).height, COLLAPSED_ROWS);

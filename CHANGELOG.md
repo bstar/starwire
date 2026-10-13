@@ -5,6 +5,10 @@ and this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Framework
+
+- Shared KIT pane allocation, collapse reasons, hit geometry and focus while retaining reader peek behavior.
+
 ### Changed
 
 - **A refresh you asked for tries the failed articles again too.** `r` on a
