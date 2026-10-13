@@ -122,8 +122,8 @@ _everywhere_
 
 | key | what it does |
 |---|---|
-| `t`            | next theme |
-| `T`            | previous theme |
+| `alt+t`        | next theme |
+| `alt+shift+t`  | previous theme |
 | `,`            | settings |
 
 ## application

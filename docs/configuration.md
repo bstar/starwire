@@ -11,7 +11,7 @@ only this file.
 
 | Key | Default | What |
 | --- | --- | --- |
-| `theme` | `"catppuccin-mocha"` | A built-in theme id, or `"system"` to follow the desktop. `t` and `T` cycle. See [Themes](themes.md). |
+| `theme` | `"catppuccin-mocha"` | A built-in theme id, or `"system"` to follow the desktop. `alt+t` and `alt+shift+t` cycle. See [Themes](themes.md). |
 | `graphics` | `"auto"` | `auto`, `kitty`, `blocks` or `off`. |
 | `padding_x`, `padding_y` | `0` | Blank cells around the whole layout, for a terminal whose window has none. |
 | `list_rows` | `12` | How many rows a focused list opens to while an article is open behind it. |

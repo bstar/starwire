@@ -10,8 +10,9 @@ to state outright.
 theme = "catppuccin-mocha"   # or "system" to follow the desktop
 ```
 
-`t` and `T` cycle through them while it is running, and the settings overlay
-writes the choice back to `config.toml`.
+`alt+t` and `alt+shift+t` cycle through them while it is running. The footer
+briefly shows the selected theme, and the settings overlay writes the choice
+back to `config.toml`.
 
 Your own themes go in `~/.local/starwire/themes/`, one file each, and the file
 name without its extension is the id. On NixOS the flake's home-manager module
