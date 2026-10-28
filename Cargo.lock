@@ -2938,12 +2938,13 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "starkit"
-version = "0.9.0"
-source = "git+https://github.com/bstar/starkit?rev=183f298a143efbc6b90e30ce22013dcc8e5d2e69#183f298a143efbc6b90e30ce22013dcc8e5d2e69"
+version = "0.13.0"
+source = "git+https://github.com/bstar/starkit?rev=a48b35761a0974cdaf18c58df8de7732756a03df#a48b35761a0974cdaf18c58df8de7732756a03df"
 dependencies = [
  "anyhow",
  "crossterm",
  "image",
+ "pkg-config",
  "ratatui",
  "ratatui-image",
  "serde",
