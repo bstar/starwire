@@ -415,7 +415,7 @@ delete fixtures while a slow CI terminal starts; never change production
 retention or fixture dates to make the terminal test pass.
 
 Reader pictures are currently text placeholders in this preview. Finish native
-picture/markdown fidelity, scrollbar dragging, row tones, full keyboard/modal
+picture/markdown fidelity, reader scrollbar dragging, row tones, full keyboard/modal
 parity, resizing/recovery, SSH/frontend actions and performance before replacing
 the default or claiming this application migrated. The bundled font notice is
 under `LICENSES` and must remain in Nix, AppImage and macOS distributions.
@@ -424,3 +424,6 @@ opening is disabled in this preview until frontend effects/media routing exists;
 never let the persistent host open a desktop program or play server-side audio
 as a substitute for the attaching frontend. Keep Help/report list selection in
 application state so a refresh cannot reset keyboard paging to the first item.
+The published KIT scrollbar candidate owns dragging for shared source, entry,
+Help and settings tables; article scrolling remains a custom-content migration
+gate. Cell modals now clear their backing cells before painting.

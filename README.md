@@ -24,7 +24,7 @@ between graphics and cells while keeping the same reader session. Use
 fields and dialogs use STAR/KIT's application host.
 
 Article pictures currently appear as text placeholders in the preview. Image
-fidelity, scrollbar dragging, row styles and complete keyboard parity remain
+fidelity, reader scrollbar dragging, row styles and complete keyboard parity remain
 migration gates. Desktop link/video actions are disabled until frontend routing
 is connected; copying a link uses the terminal clipboard. Plain `starwire`
 continues to open the existing reader until those gates pass.
