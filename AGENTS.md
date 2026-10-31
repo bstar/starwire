@@ -409,6 +409,10 @@ Root Crossterm is patched to d4e9929 because KIT's patch is not inherited.
 CI runs this proof in private Kitty/Xvfb using fixture helpers from the exact
 KIT revision in `Cargo.lock`, and retains screenshots/logs as an artifact.
 The cell-only build remains a separate CI check.
+The proof's private configuration retains dated replay articles for 100 years
+and disables startup fetching. Otherwise the normal 30-day retention sweep can
+delete fixtures while a slow CI terminal starts; never change production
+retention or fixture dates to make the terminal test pass.
 
 Reader pictures are currently text placeholders in this preview. Finish native
 picture/markdown fidelity, scrollbar dragging, row tones, full keyboard/modal

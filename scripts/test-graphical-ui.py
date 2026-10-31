@@ -41,6 +41,12 @@ with tempfile.TemporaryDirectory(prefix='starwire-ui-proof-') as directory:
         env['WAYLAND_DISPLAY'] = str(Path(os.environ['XDG_RUNTIME_DIR']) / os.environ['WAYLAND_DISPLAY'])
     else:
         env.pop('WAYLAND_DISPLAY', None)
+    # Replay publication dates are fixed. Production retention must not delete
+    # these synthetic articles while a slow CI terminal is starting.
+    configuration = private / 'config'
+    configuration.mkdir()
+    (configuration / 'config.toml').write_text(
+        '[articles]\nkeep_days = 36500\n[fetch]\nrefresh_on_start = false\n')
     replay = root / 'testdata/replay'
     subprocess.run([str(binary), '--replay', str(replay), 'fetch'], env=env,
                    capture_output=True, check=True, timeout=30)
@@ -132,6 +138,12 @@ with tempfile.TemporaryDirectory(prefix='starwire-ui-proof-') as directory:
     finally:
         if app_log.exists():
             (output / 'frontend.log').write_text(app_log.read_text())
+        if child.poll() is None:
+            try:
+                (output / 'last-screen.txt').write_text(text())
+                rc('screenshot', '--match', 'id:1', str(output / 'last-screen.png'))
+            except (OSError, subprocess.SubprocessError):
+                pass
         # A failed proof must not leave its persistent private controller alive.
         for path in runtime.glob('starkit-starwire/*.sock'):
             try:
