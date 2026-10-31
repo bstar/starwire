@@ -46,6 +46,7 @@ install -Dm644 packaging/starwire.desktop     "$appdir/usr/share/applications/st
 install -Dm644 packaging/starwire.png         "$appdir/usr/share/icons/hicolor/256x256/apps/starwire.png"
 install -Dm644 packaging/starwire.svg         "$appdir/usr/share/icons/hicolor/scalable/apps/starwire.svg"
 install -Dm644 README.md LICENSE -t           "$appdir/usr/share/doc/starwire/"
+cp -R LICENSES "$appdir/usr/share/doc/starwire/"
 cp "$appdir/starwire.png" "$appdir/.DirIcon"
 mkdir -p "$appdir/usr/lib"
 

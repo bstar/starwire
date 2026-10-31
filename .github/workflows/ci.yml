@@ -44,6 +44,53 @@ jobs:
       # Anything that needs the network is gated behind STARWIRE_TEST_NET,
       # and the yt-dlp tests also want the binary on PATH.
       - run: cargo test --all
+      - name: Preserve the cell-only build
+        run: cargo test --locked --no-default-features
+
+  native-preview:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+      LIBGL_ALWAYS_SOFTWARE: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Read the locked KIT fixture revision
+        id: kit
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+          with open('Cargo.lock', 'rb') as source:
+              packages = tomllib.load(source)['package']
+          kit = next(package for package in packages if package['name'] == 'starkit')
+          print('revision=' + kit['source'].rsplit('#', 1)[1])
+          PY
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: bstar/starkit
+          ref: ${{ steps.kit.outputs.revision }}
+          path: .kit-fixture
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - name: Install private terminal test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg xvfb libgl1-mesa-dri libegl1 libxcb-xkb1 libxkbcommon-x11-0 libxcb-cursor0
+          bash .kit-fixture/scripts/install-test-kitty.sh "$RUNNER_TEMP/kitty-proof"
+      - run: cargo build --locked
+      - name: Verify graphical and cell reader workflows in Kitty
+        run: |
+          xvfb-run -a python3 scripts/test-graphical-ui.py \
+            --kit .kit-fixture \
+            --kitty "$RUNNER_TEMP/kitty-proof/runtime/bin/kitty" \
+            --kitten "$RUNNER_TEMP/kitty-proof/runtime/bin/kitten" \
+            --binary target/debug/starwire \
+            --output framework-ui-proof --display-server x11
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: framework-ui-proof
+          path: framework-ui-proof/
 
   # macOS is a supported target, and most of what breaks there breaks at
   # compile time -- a `cfg` that assumed Linux, a path that assumed XDG, the

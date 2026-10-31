@@ -18,12 +18,36 @@ use wire::feed::{ArticleStatus, EntryKind, FeedKind, Selection};
 use wire::net::Http;
 
 fn main() -> Result<()> {
+    #[cfg(all(feature = "terminal-graphics", unix))]
+    if std::env::args().nth(1).is_some_and(|arg| {
+        matches!(
+            arg.as_str(),
+            "--serve" | "--graphical-relay" | "--attach" | "--sessions" | "--cells"
+        )
+    }) {
+        PATHS.init_private_dirs();
+        let _log = starkit::logging::init(&PATHS, false)?;
+        return ui::app::framework::run();
+    }
     let cli = cli::Cli::parse();
 
     PATHS.init_private_dirs();
     // The guard must outlive everything that logs; dropping it early loses
     // whatever the writer thread had buffered.
     let _log = starkit::logging::init(&PATHS, cli.verbose)?;
+
+    if cli.graphical || cli.cells {
+        anyhow::ensure!(
+            cli.command.is_none(),
+            "Presentation options apply to the reader window"
+        );
+        #[cfg(all(feature = "terminal-graphics", unix))]
+        return ui::app::framework::run();
+        #[cfg(not(all(feature = "terminal-graphics", unix)))]
+        if cli.graphical {
+            eprintln!("Graphics unavailable; using the terminal reader");
+        }
+    }
 
     let config_path = PATHS.config_file()?;
     let cfg = config::Config::load(&config_path)?;

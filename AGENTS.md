@@ -393,3 +393,30 @@ presentation retain their current contracts.
 The current pin aligns the shared engines and public UI candidate. It does not
 complete this application's migration to `ui::application::Host`; retain that
 migration and its behavioral/visual acceptance as separate work.
+
+2026-10-31: `--graphical` and `--cells` opt into the first KIT-owned hosted
+shell under `ui/app/framework`. Plain invocation still uses the existing
+reader. Keep that default until migration parity is proven. The shared shell
+owns panes, table lists, standard fields/dialogs and focus; only article/picture
+content occupies custom slots. The original core/stack and workers stay here.
+
+Offline fixture tests cover source → entries → article, search submission,
+safe confirmation defaults and bounded cell/native scenes. The private Kitty
+proof in `scripts/test-graphical-ui.py` uses replay data, exercises live modal
+field switching and injects zero coordinates. Pass `--kit` for KIT's public
+terminal fixture helper; it must never use the reader's database/configuration.
+Root Crossterm is patched to d4e9929 because KIT's patch is not inherited.
+CI runs this proof in private Kitty/Xvfb using fixture helpers from the exact
+KIT revision in `Cargo.lock`, and retains screenshots/logs as an artifact.
+The cell-only build remains a separate CI check.
+
+Reader pictures are currently text placeholders in this preview. Finish native
+picture/markdown fidelity, scrollbar dragging, row tones, full keyboard/modal
+parity, resizing/recovery, SSH/frontend actions and performance before replacing
+the default or claiming this application migrated. The bundled font notice is
+under `LICENSES` and must remain in Nix, AppImage and macOS distributions.
+Link copying already uses KIT's bounded frontend clipboard effect. Browser/video
+opening is disabled in this preview until frontend effects/media routing exists;
+never let the persistent host open a desktop program or play server-side audio
+as a substitute for the attaching frontend. Keep Help/report list selection in
+application state so a refresh cannot reset keyboard paging to the first item.

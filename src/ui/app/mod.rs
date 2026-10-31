@@ -38,6 +38,8 @@
 //! [`App::run`], before `term::init`, never inside [`App::new`].
 
 mod draw;
+#[cfg(all(feature = "terminal-graphics", unix))]
+pub mod framework;
 mod keys;
 mod mouse;
 mod refresh;

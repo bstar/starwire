@@ -23,6 +23,14 @@ use clap::{Args, Parser, Subcommand};
     long_about = None,
 )]
 pub struct Cli {
+    /// Open the graphical terminal reader. F9 switches cells and graphics.
+    #[arg(long)]
+    pub graphical: bool,
+
+    /// Open the reader in cells.
+    #[arg(long, conflicts_with = "graphical")]
+    pub cells: bool,
+
     /// Log at debug level. To the log file, never to the terminal.
     #[arg(short, long, global = true)]
     pub verbose: bool,

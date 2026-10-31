@@ -137,7 +137,11 @@
             cargoLock.allowBuiltinFetchGit = true;
 
             # freedesktop assets, which mean nothing on macOS.
-            postInstall = pkgsFor.lib.optionalString pkgsFor.stdenv.hostPlatform.isLinux ''
+            postInstall = ''
+              mkdir -p $out/share/doc/starwire
+              cp LICENSE $out/share/doc/starwire/
+              cp -R LICENSES $out/share/doc/starwire/
+            '' + pkgsFor.lib.optionalString pkgsFor.stdenv.hostPlatform.isLinux ''
               install -Dm644 packaging/starwire.desktop \
                 $out/share/applications/starwire.desktop
               install -Dm644 packaging/starwire.png \

@@ -10,6 +10,15 @@ repository = "https://github.com/bstar/starwire"
 keywords = ["rss", "atom", "feed-reader", "tui", "terminal"]
 categories = ["command-line-utilities"]
 
+[features]
+default = ["terminal-graphics"]
+terminal-graphics = ["starkit/terminal-graphics"]
+
+[patch.crates-io]
+# Crossterm 0.29 underflows on zero mouse/cursor coordinates. Root patches
+# are not inherited from KIT; keep the same parser as AMP/CORD and the gallery.
+crossterm = { git = "https://github.com/crossterm-rs/crossterm", rev = "d4e9929f9a1c4adf91505d54f8527c817ae504cd" }
+
 [dependencies]
 # The shared terminal foundation: paths, logging, atomic and private file
 # writes, theming, terminal setup with a panic hook, text entry, wrapping, the

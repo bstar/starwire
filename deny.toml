@@ -97,8 +97,6 @@ wildcards = "deny"
 unknown-registry = "deny"
 unknown-git = "deny"
 
-# The one exception, named rather than allowed by loosening the rule above.
-# STAR/KIT is the foundation this and its three siblings stand on and is pinned
-# to a revision; it is not published to crates.io because its API is whatever
-# its consumers need and a version on a registry would suggest otherwise.
-allow-git = ["https://github.com/bstar/starkit"]
+# Explicit immutable Git sources: the shared KIT candidate and the upstream
+# Crossterm zero-coordinate parser fix. Root patches are not inherited from KIT.
+allow-git = ["https://github.com/bstar/starkit", "https://github.com/crossterm-rs/crossterm"]

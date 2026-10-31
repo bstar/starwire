@@ -18,6 +18,17 @@ Instapaper did — and YouTube channels are feeds too.
 
 Read the whole thing.
 
+The graphical reader preview runs with `starwire --graphical`; F9 switches
+between graphics and cells while keeping the same reader session. Use
+`starwire --cells` to open that preview directly in cells. Its panes, tables,
+fields and dialogs use STAR/KIT's application host.
+
+Article pictures currently appear as text placeholders in the preview. Image
+fidelity, scrollbar dragging, row styles and complete keyboard parity remain
+migration gates. Desktop link/video actions are disabled until frontend routing
+is connected; copying a link uses the terminal clipboard. Plain `starwire`
+continues to open the existing reader until those gates pass.
+
 ## Get it
 
 ```sh
