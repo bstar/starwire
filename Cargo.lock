@@ -3113,7 +3113,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 [[package]]
 name = "starkit"
 version = "0.13.0"
-source = "git+https://github.com/bstar/starkit?rev=11d6caa394e0c7ae104dd3ecd12387cc05b95b77#11d6caa394e0c7ae104dd3ecd12387cc05b95b77"
+source = "git+https://github.com/bstar/starkit?rev=874694d4a673d45ef02e8692692599537f213027#874694d4a673d45ef02e8692692599537f213027"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3139,6 +3139,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-width",
  "ureq",
+ "url",
 ]
 
 [[package]]
