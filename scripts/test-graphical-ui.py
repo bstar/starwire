@@ -35,6 +35,23 @@ with tempfile.TemporaryDirectory(prefix='starwire-ui-proof-') as directory:
            'XDG_CONFIG_HOME': str(private / 'config'), 'XDG_DATA_HOME': str(private / 'share'),
            'XDG_CACHE_HOME': str(private / 'cache'), 'XDG_RUNTIME_DIR': str(runtime),
            'STARWIRE_LOG': 'starwire=debug,starkit=debug', 'STAR_GRAPHICS_RENDERER': 'cpu'}
+    opener_bin = private / 'bin'
+    opener_bin.mkdir()
+    opened = private / 'browser-records'
+    opened.mkdir()
+    opener = f'#!{sys.executable}\n' + '''import json, os, sys
+from pathlib import Path
+root = Path(os.environ['STARWIRE_BROWSER_PROOF'])
+temporary = root / (str(os.getpid()) + '.tmp')
+temporary.write_text(json.dumps({'argv': sys.argv[1:], 'parent': os.getppid()}))
+temporary.replace(temporary.with_suffix('.json'))
+'''
+    for name in ('xdg-open', 'open'):
+        path = opener_bin / name
+        path.write_text(opener)
+        path.chmod(0o755)
+    env['PATH'] = str(opener_bin) + os.pathsep + env['PATH']
+    env['STARWIRE_BROWSER_PROOF'] = str(opened)
     for key in ('TMUX', 'TMUX_PANE', 'STY', 'SSH_CONNECTION', 'SSH_TTY', 'NO_COLOR', 'STAR_KIT_ASCII'):
         env.pop(key, None)
     if a.display_server == 'wayland' and os.environ.get('WAYLAND_DISPLAY'):
@@ -54,6 +71,8 @@ with tempfile.TemporaryDirectory(prefix='starwire-ui-proof-') as directory:
         [str(binary), 'list', '--json'], env=env, timeout=10).decode().splitlines()]
     assert entries, 'Replay database has no articles'
     title = entries[0]['title'][:16]
+    article_url = entries[0]['url']
+    assert article_url and article_url.startswith(('https://', 'http://')), 'First fixture has no web link'
     address = 'unix:' + str(private / 'kitty.sock')
     startup = TerminalStartup(private)
     log = (output / 'kitty.log').open('w')
@@ -98,6 +117,19 @@ with tempfile.TemporaryDirectory(prefix='starwire-ui-proof-') as directory:
     try:
         startup.release(child, rc, output / 'terminal-ready.png')
         wait(lambda: app_log.exists() and 'Graphical frame presented' in app_log.read_text(), 'No native reader frame')
+        window = json.loads(rc('ls'))[0]['tabs'][0]['windows'][0]
+        frontend_pid = next(process['pid'] for process in window['foreground_processes']
+                            if process['cmdline'][0] == str(binary) and '--graphical' in process['cmdline'])
+        def browser_request(count):
+            rc('send-key', '--match', 'id:1', 'o')
+            rc('send-key', '--match', 'id:1', 'o')
+            records = wait(lambda: (paths if len(paths := list(opened.glob('*.json'))) >= count else None),
+                           'Browser request did not reach the local opener')
+            values = [json.loads(path.read_text()) for path in records]
+            assert all(value['argv'] == [article_url] for value in values), values
+            assert all(value['parent'] == frontend_pid for value in values), \
+                f'Browser was launched outside the attaching frontend: {values}'
+            (output / 'browser-records.json').write_text(json.dumps(values, indent=2) + '\n')
         native = pixels('sources-native')
         rc('send-text', '--match', 'id:1', '\x1b[<35;0;1M\x1b[<35;1;0M\x1b[0;0R')
         rc('send-key', '--match', 'id:1', 'f1')
@@ -112,8 +144,10 @@ with tempfile.TemporaryDirectory(prefix='starwire-ui-proof-') as directory:
         rc('send-key', '--match', 'id:1', 'enter')
         wait(lambda: title in text() and 'Age' not in text(), 'Opening an entry did not show the reader')
         pixels('reader-cells')
+        browser_request(1)
         rc('send-key', '--match', 'id:1', 'f9')
         wait(lambda: title not in text(), 'Graphical reader did not return')
+        browser_request(2)
         reader = pixels('reader-native')
         rc('send-key', '--match', 'id:1', 'alt+f')
         wait(lambda: changed(reader, 'search-native'), 'Search field did not open')
@@ -132,7 +166,8 @@ with tempfile.TemporaryDirectory(prefix='starwire-ui-proof-') as directory:
         child.wait(timeout=10)
         assert child.returncode == 0
         report.update(native_shell=True, source_entry_article=True, shared_fields=True,
-                      cell_graphics_switch=True, modal_isolation=True, clean_exit=True)
+                      cell_graphics_switch=True, modal_isolation=True, clean_exit=True,
+                      frontend_url_cells=True, frontend_url_native=True)
         (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
         print(json.dumps(report, sort_keys=True))
     finally:

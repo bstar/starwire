@@ -160,7 +160,7 @@ impl Framework {
                             .map(|(i, b)| {
                                 let mut row = Item::new(format!("help-{i}"), b.keys);
                                 row.columns.push(b.label.into());
-                                row.enabled = Self::supports_action(b.action);
+                                row.enabled = self.supports_action(b.action);
                                 row
                             })
                             .collect(),

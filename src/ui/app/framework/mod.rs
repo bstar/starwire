@@ -30,6 +30,7 @@ pub struct Framework {
     focused: Option<Id>,
     reader_hit: Option<ReaderHit>,
     effects: Vec<starkit::terminal_graphics::protocol::ServerMessage>,
+    urls: starkit::terminal_graphics::frontend_actions::Requests,
 }
 
 struct ReaderHit {
@@ -56,6 +57,7 @@ impl Framework {
             focused: None,
             reader_hit: None,
             effects: vec![],
+            urls: Default::default(),
         }
     }
     fn context(&self) -> (ModuleId, Option<std::mem::Discriminant<Overlay>>, bool) {
@@ -151,7 +153,33 @@ impl Application for Framework {
         self.app.quit
     }
     fn effects(&mut self) -> Vec<starkit::terminal_graphics::protocol::ServerMessage> {
-        std::mem::take(&mut self.effects)
+        let mut effects = std::mem::take(&mut self.effects);
+        effects.extend(self.urls.drain().map(|message| {
+            starkit::terminal_graphics::protocol::ServerMessage::FrontendAction { message }
+        }));
+        effects
+    }
+    fn capabilities(
+        &mut self,
+        capabilities: starkit::terminal_graphics::capabilities::Capabilities,
+    ) {
+        self.urls.set_available(capabilities.open_urls_v1);
+    }
+    fn frontend_action(
+        &mut self,
+        message: starkit::terminal_graphics::frontend_actions::ToHost,
+    ) -> bool {
+        match self.urls.receive(message) {
+            Some(Ok(())) => self.app.say("Link sent to your local browser"),
+            Some(Err(error)) => self.app.warn(error.to_string()),
+            None => return false,
+        }
+        true
+    }
+    fn detached(&mut self) {
+        self.urls.set_available(false);
+        self.effects.clear();
+        self.app.o_pending = None;
     }
     fn shutdown(&mut self) {
         self.app.save_session();
@@ -164,11 +192,40 @@ pub fn run() -> anyhow::Result<()> {
         application::Application as Session, client::PresentationPreference,
     };
     let cells = std::env::args().any(|arg| arg == "--cells");
+    let preference = PresentationPreference {
+        cells,
+        path: crate::paths::PATHS.config_dir()?.join("presentation.toml"),
+    };
+    let internal = std::env::args().nth(1).is_some_and(|arg| {
+        matches!(
+            arg.as_str(),
+            "--serve" | "--graphical-relay" | "--attach" | "--sessions"
+        )
+    });
+    if !internal {
+        use clap::Parser;
+        let cli = crate::cli::Cli::try_parse()?;
+        if let Some(host) = cli.ssh {
+            use starkit::terminal_graphics::client::{self, Launch, PresentationOptions};
+            return client::run_with_preference(
+                Launch {
+                    executable: cli.remote_executable.unwrap_or_else(|| "starwire".into()),
+                    host: Some(host),
+                    ssh_config: cli.ssh_config,
+                    session: "reader".into(),
+                    directory: None,
+                    attach_only: cli.attach_only,
+                    play: None,
+                },
+                |_| None,
+                || None,
+                PresentationOptions::default(),
+                preference,
+            );
+        }
+    }
     Session::new("starwire")?
-        .with_presentation(PresentationPreference {
-            cells,
-            path: crate::paths::PATHS.config_dir()?.join("presentation.toml"),
-        })
+        .with_presentation(preference)
         .run(|args| {
             use clap::Parser;
             let cli = crate::cli::Cli::try_parse_from(

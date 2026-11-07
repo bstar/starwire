@@ -135,6 +135,83 @@ fn shared_fields_preserve_search_submission_and_confirmation_defaults() {
     key(&mut app, &mut ui, KeyCode::Enter);
     assert!(!app.app.overlays.is_open());
 }
+
+#[test]
+fn reader_links_use_frontend_requests_and_keep_chords_and_detach_cleanup() {
+    use starkit::terminal_graphics::{
+        frontend_actions::{Error, ToClient, ToHost},
+        protocol::ServerMessage,
+    };
+    let (mut app, mut fake) = fixture();
+    app.app.open_entry(fake.entry("borrow checker"));
+    app.tick();
+    fake.pump();
+    app.tick();
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 80, 24));
+    assert!(app.cells(&"reader".into(), &mut buffer));
+    let expected =
+        crate::ui::markdown::parse::parse(&app.app.view.article.as_ref().unwrap().markdown).links
+            [0]
+        .clone();
+    assert!(!app.supports_action(Action::OpenBrowser));
+    app.urls.set_available(true);
+    let mut ui = runtime(&app);
+    frame(&mut app, &mut ui);
+    key(&mut app, &mut ui, KeyCode::Char('o'));
+    key(&mut app, &mut ui, KeyCode::Char('1'));
+    if app.app.o_pending.is_some() {
+        key(&mut app, &mut ui, KeyCode::Enter);
+    }
+    let effects = app.effects();
+    let [ServerMessage::FrontendAction {
+        message: ToClient::OpenUrl { id, url },
+    }] = effects.as_slice()
+    else {
+        panic!("Numbered link did not use the frontend: {effects:?}");
+    };
+    assert_eq!(
+        *url,
+        starkit::terminal_graphics::frontend_actions::web_url(&expected).unwrap()
+    );
+    assert!(!app.frontend_action(ToHost::Result {
+        id: id + 1,
+        error: None
+    }));
+    assert!(app.frontend_action(ToHost::Result {
+        id: *id,
+        error: Some(Error::LaunchFailed)
+    }));
+    assert!(app.app.note.as_ref().unwrap().0.contains("Could not open"));
+    key(&mut app, &mut ui, KeyCode::Char('o'));
+    key(&mut app, &mut ui, KeyCode::Char('o'));
+    app.detached();
+    assert!(
+        app.effects().is_empty(),
+        "queued browser requests must not replay on reattach"
+    );
+    assert!(!app.urls.available());
+    assert!(!app.supports_action(Action::PlayVideo));
+    assert!(!app.frontend_action(ToHost::Result {
+        id: id + 1,
+        error: None
+    }));
+}
+
+#[test]
+fn a_linkless_selection_cannot_borrow_the_open_articles_url() {
+    let (mut app, mut fake) = fixture();
+    let article = fake.entry("borrow checker");
+    let no_link = fake.entry("not arrived yet");
+    app.app.open_entry(article);
+    app.tick();
+    fake.pump();
+    app.tick();
+    assert!(app.app.entry_url(article).is_some());
+    assert!(app.app.entry_url(no_link).is_none());
+    app.urls.set_available(true);
+    assert!(app.urls.open_url("file:///etc/passwd").is_err());
+    assert!(app.effects().is_empty());
+}
 #[test]
 fn shared_shell_and_all_modal_shapes_stay_bounded_across_presentations() {
     for action in [

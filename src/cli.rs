@@ -31,6 +31,16 @@ pub struct Cli {
     #[arg(long, conflicts_with = "graphical")]
     pub cells: bool,
 
+    /// Attach to the reader on an SSH host, presenting the window locally.
+    #[arg(long, conflicts_with = "replay")]
+    pub ssh: Option<String>,
+    #[arg(long, requires = "ssh")]
+    pub ssh_config: Option<PathBuf>,
+    #[arg(long, requires = "ssh")]
+    pub remote_executable: Option<String>,
+    #[arg(long, requires = "ssh")]
+    pub attach_only: bool,
+
     /// Log at debug level. To the log file, never to the terminal.
     #[arg(short, long, global = true)]
     pub verbose: bool,
@@ -227,6 +237,39 @@ mod tests {
         assert!(cli.command.is_none());
         assert!(!cli.verbose);
         assert!(cli.replay.is_none());
+    }
+
+    #[test]
+    fn ssh_launch_keeps_local_presentation_and_remote_options_explicit() {
+        let cli = Cli::try_parse_from([
+            "starwire",
+            "--ssh",
+            "reader-host",
+            "--cells",
+            "--ssh-config",
+            "ssh.conf",
+            "--remote-executable",
+            "/opt/starwire",
+            "--attach-only",
+        ])
+        .unwrap();
+        assert_eq!(cli.ssh.as_deref(), Some("reader-host"));
+        assert!(cli.cells && cli.attach_only && cli.command.is_none());
+        assert_eq!(cli.remote_executable.as_deref(), Some("/opt/starwire"));
+        assert_eq!(
+            cli.ssh_config.as_deref(),
+            Some(std::path::Path::new("ssh.conf"))
+        );
+        assert!(Cli::try_parse_from(["starwire", "--attach-only"]).is_err());
+        assert!(Cli::try_parse_from(["starwire", "--remote-executable", "other"]).is_err());
+        assert!(Cli::try_parse_from([
+            "starwire",
+            "--ssh",
+            "reader-host",
+            "--replay",
+            "local-fixture"
+        ])
+        .is_err());
     }
 
     #[test]

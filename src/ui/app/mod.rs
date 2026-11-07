@@ -600,6 +600,21 @@ impl App {
         }
     }
 
+    fn entry_url(&self, id: EntryId) -> Option<String> {
+        let state = self.core.state();
+        state
+            .page
+            .row(id)
+            .and_then(|row| row.url.clone())
+            .or_else(|| {
+                state
+                    .article
+                    .as_ref()
+                    .filter(|article| article.entry == id)
+                    .and_then(|article| article.url.clone())
+            })
+    }
+
     fn entry_kind(&self, id: EntryId) -> Option<EntryKind> {
         let i = self.view.entry_ids.iter().position(|e| *e == id)?;
         Some(self.view.entry_rows[i].kind)
@@ -1281,14 +1296,7 @@ impl App {
         let Some(id) = self.target_entry() else {
             return;
         };
-        let url = {
-            let state = self.core.state();
-            state
-                .page
-                .row(id)
-                .and_then(|r| r.url.clone())
-                .or_else(|| state.article.as_ref().and_then(|a| a.url.clone()))
-        };
+        let url = self.entry_url(id);
         match url {
             Some(url) => match super::clipboard::copy(&url) {
                 Ok(()) => self.say("link copied"),

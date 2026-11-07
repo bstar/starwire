@@ -2,30 +2,48 @@
 use super::*;
 
 impl Framework {
-    pub(super) fn supports_action(action: Action) -> bool {
-        !matches!(
-            action,
-            Action::OpenBrowser | Action::PlayVideo | Action::OpenLink
-        )
+    pub(super) fn supports_action(&self, action: Action) -> bool {
+        match action {
+            Action::PlayVideo => false,
+            Action::OpenBrowser | Action::OpenLink => self.urls.available(),
+            _ => true,
+        }
+    }
+    fn open_url(&mut self, url: &str) {
+        match self.urls.open_url(url) {
+            Ok(_) => self.app.say("Opening in your local browser"),
+            Err(error) => self.app.warn(error.to_string()),
+        }
+    }
+    fn open_browser(&mut self) {
+        if let Some(url) = self
+            .app
+            .target_entry()
+            .and_then(|id| self.app.entry_url(id))
+        {
+            self.open_url(&url);
+        } else {
+            self.app.warn("That entry has no link");
+        }
+    }
+    fn open_link(&mut self, number: u16) {
+        let url = self.app.view.article.as_ref().and_then(|article| {
+            crate::ui::markdown::parse::parse(&article.markdown)
+                .links
+                .get(usize::from(number).checked_sub(1)?)
+                .cloned()
+        });
+        if let Some(url) = url {
+            self.open_url(&url);
+        } else {
+            self.app.say(format!("There is no link {number}"));
+        }
     }
     fn copy_link(&mut self) {
         let Some(id) = self.app.target_entry() else {
             return;
         };
-        let url = {
-            let state = self.app.core.state();
-            state
-                .page
-                .row(id)
-                .and_then(|row| row.url.clone())
-                .or_else(|| {
-                    state
-                        .article
-                        .as_ref()
-                        .filter(|article| article.entry == id)
-                        .and_then(|article| article.url.clone())
-                })
-        };
+        let url = self.app.entry_url(id);
         if let Some(url) = url.filter(|url| url.len() <= 8192) {
             if self.effects.len() < 8 {
                 self.effects.push(
@@ -100,9 +118,10 @@ impl Framework {
                                 });
                             }
                             Action::CopyLink => self.copy_link(),
-                            action if !Self::supports_action(action) => self
+                            Action::OpenBrowser => self.open_browser(),
+                            action if !self.supports_action(action) => self
                                 .app
-                                .say("Opening links and videos is unavailable in this preview"),
+                                .say("Video playback is unavailable in this preview"),
                             action => self.app.act(action),
                         }
                     }
@@ -165,7 +184,7 @@ impl Framework {
         for (index, binding) in keymap::BINDINGS.iter().enumerate() {
             let mut command = UiCommand::new(format!("action-{index}"), binding.label)
                 .group(binding.group)
-                .enabled(Self::supports_action(binding.action));
+                .enabled(self.supports_action(binding.action));
             for spelling in starkit::keymap::alternatives(binding.keys) {
                 let Some(spec) = starkit::keymap::KeySpec::parse(spelling) else {
                     continue;
@@ -323,8 +342,8 @@ impl Framework {
                         })
                         .map(|link| link.number)
                 });
-                if number.is_some() {
-                    self.app.say("Opening links is unavailable in this preview");
+                if let Some(number) = number {
+                    self.open_link(number);
                 }
             }
             Event::CustomKey { id, key } if id.0 == "reader" => self.app.key(key),
@@ -374,22 +393,49 @@ impl Framework {
         if self.app.filter.is_some() || key.code == KeyCode::F(9) {
             return false;
         }
-        if keymap::module(self.app.layout.focus().module(), key)
-            .or_else(|| keymap::resolve(key))
-            .is_some_and(|action| !Self::supports_action(action))
-        {
-            self.app
-                .say("Opening links and videos is unavailable in this preview");
+        if let Some(mut typed) = self.app.o_pending.clone() {
+            use keymap::OChord;
+            match keymap::o_prefix(key, &typed, self.app.links) {
+                OChord::Digit => {
+                    if let KeyCode::Char(c) = key.code {
+                        typed.push(c);
+                    }
+                    self.app.o_pending = Some(typed);
+                    return true;
+                }
+                OChord::Open(number) => {
+                    self.app.o_pending = None;
+                    self.open_link(number);
+                    return true;
+                }
+                OChord::OpenArticle => {
+                    self.app.o_pending = None;
+                    self.open_browser();
+                    return true;
+                }
+                OChord::Cancel => {
+                    self.app.o_pending = None;
+                    return true;
+                }
+                OChord::Ignore => {}
+            }
+        }
+        if self.app.g_pending || (key.modifiers.is_empty() && key.code == KeyCode::Char('g')) {
+            self.app.key(key);
             return true;
         }
-        if self.app.g_pending
-            || self.app.o_pending.is_some()
-            || (key.modifiers.is_empty()
-                && (key.code == KeyCode::Char('g')
-                    || (key.code == KeyCode::Char('o')
-                        && self.app.layout.focus() == ModuleId::Reader)))
+        if keymap::module(self.app.layout.focus().module(), key)
+            .or_else(|| keymap::resolve(key))
+            .is_some_and(|action| !self.supports_action(action))
         {
-            self.app.key(key);
+            self.app.say("That action is unavailable in this terminal");
+            return true;
+        }
+        if key.modifiers.is_empty()
+            && key.code == KeyCode::Char('o')
+            && self.app.layout.focus() == ModuleId::Reader
+        {
+            self.app.o_pending = Some(String::new());
             return true;
         }
         false

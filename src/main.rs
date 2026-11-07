@@ -36,13 +36,18 @@ fn main() -> Result<()> {
     // whatever the writer thread had buffered.
     let _log = starkit::logging::init(&PATHS, cli.verbose)?;
 
-    if cli.graphical || cli.cells {
+    if cli.graphical || cli.cells || cli.ssh.is_some() {
         anyhow::ensure!(
             cli.command.is_none(),
             "Presentation options apply to the reader window"
         );
         #[cfg(all(feature = "terminal-graphics", unix))]
         return ui::app::framework::run();
+        #[cfg(not(all(feature = "terminal-graphics", unix)))]
+        anyhow::ensure!(
+            cli.ssh.is_none(),
+            "SSH sessions require terminal-graphics support"
+        );
         #[cfg(not(all(feature = "terminal-graphics", unix)))]
         if cli.graphical {
             eprintln!("Graphics unavailable; using the terminal reader");
