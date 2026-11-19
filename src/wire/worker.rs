@@ -812,7 +812,7 @@ fn export_opml(db: &Db, path: &std::path::Path) -> anyhow::Result<Note> {
     let rows = feeds::list_feeds_with_unread(db)?;
     let folders = feeds::folders(db)?;
     let text = import::opml::export(&rows, &folders)?;
-    starkit::fs::write_atomic(path, text.as_bytes())
+    starcore::fs::write_atomic(path, text.as_bytes())
         .map_err(|e| anyhow::anyhow!("writing {}: {e}", path.display()))?;
     Ok(Note::info(format!(
         "{} feed{} written to {}",

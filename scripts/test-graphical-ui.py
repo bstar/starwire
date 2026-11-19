@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise WIRE's KIT-hosted reader against an isolated replay database."""
+"""Exercise WIRE's CORE-hosted reader against an isolated replay database."""
 import argparse
 import json
 import os
@@ -13,7 +13,7 @@ import time
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--binary', required=True, type=Path)
-p.add_argument('--kit', required=True, type=Path, help='KIT checkout containing scripts/terminal_fixture.py')
+p.add_argument('--core', required=True, type=Path, help='CORE checkout containing scripts/terminal_fixture.py')
 p.add_argument('--kitty', required=True)
 p.add_argument('--kitten', required=True)
 p.add_argument('--output', required=True, type=Path)
@@ -23,7 +23,7 @@ root = Path(__file__).resolve().parents[1]
 binary = a.binary.resolve()
 output = a.output.resolve()
 output.mkdir(parents=True, exist_ok=True)
-sys.path.insert(0, str(a.kit.resolve() / 'scripts'))
+sys.path.insert(0, str(a.core.resolve() / 'scripts'))
 from terminal_fixture import TerminalStartup
 
 with tempfile.TemporaryDirectory(prefix='starwire-ui-proof-') as directory:
@@ -34,7 +34,7 @@ with tempfile.TemporaryDirectory(prefix='starwire-ui-proof-') as directory:
            'STARWIRE_CONFIG_DIR': str(private / 'config'), 'HOME': str(private),
            'XDG_CONFIG_HOME': str(private / 'config'), 'XDG_DATA_HOME': str(private / 'share'),
            'XDG_CACHE_HOME': str(private / 'cache'), 'XDG_RUNTIME_DIR': str(runtime),
-           'STARWIRE_LOG': 'starwire=debug,starkit=debug', 'STAR_GRAPHICS_RENDERER': 'cpu'}
+           'STARWIRE_LOG': 'starwire=debug,starcore=debug', 'STAR_GRAPHICS_RENDERER': 'cpu'}
     opener_bin = private / 'bin'
     opener_bin.mkdir()
     opened = private / 'browser-records'
@@ -52,7 +52,7 @@ temporary.replace(temporary.with_suffix('.json'))
         path.chmod(0o755)
     env['PATH'] = str(opener_bin) + os.pathsep + env['PATH']
     env['STARWIRE_BROWSER_PROOF'] = str(opened)
-    for key in ('TMUX', 'TMUX_PANE', 'STY', 'SSH_CONNECTION', 'SSH_TTY', 'NO_COLOR', 'STAR_KIT_ASCII'):
+    for key in ('TMUX', 'TMUX_PANE', 'STY', 'SSH_CONNECTION', 'SSH_TTY', 'NO_COLOR', 'STAR_CORE_ASCII'):
         env.pop(key, None)
     if a.display_server == 'wayland' and os.environ.get('WAYLAND_DISPLAY'):
         env['WAYLAND_DISPLAY'] = str(Path(os.environ['XDG_RUNTIME_DIR']) / os.environ['WAYLAND_DISPLAY'])
@@ -180,7 +180,7 @@ temporary.replace(temporary.with_suffix('.json'))
             except (OSError, subprocess.SubprocessError):
                 pass
         # A failed proof must not leave its persistent private controller alive.
-        for path in runtime.glob('starkit-starwire/*.sock'):
+        for path in runtime.glob('starcore-starwire/*.sock'):
             try:
                 with socket.socket(socket.AF_UNIX) as connection:
                     connection.settimeout(1)

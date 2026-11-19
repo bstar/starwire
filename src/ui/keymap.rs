@@ -23,7 +23,7 @@
 //!
 //! `gg` (to the top of the list) is dispatched by [`g_prefix`], and `o<n>`
 //! (open link *n* in the article) by [`o_prefix`]. Neither spelling is one
-//! key, so `starkit::keymap::KeySpec::parse` refuses both -- which is what
+//! key, so `starcore::keymap::KeySpec::parse` refuses both -- which is what
 //! keeps them out of [`GLOBAL`] and [`MODULES`] while leaving them in
 //! [`BINDINGS`] for the help overlay to print. `Keymap::from_table` drops an
 //! alternative it cannot parse rather than panicking on it, so the chord
@@ -64,8 +64,8 @@
 
 use std::sync::LazyLock;
 
-use starkit::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use starkit::keymap::{Binding as KitBinding, Keymap, MouseHelp};
+use starcore::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use starcore::keymap::{Binding as KitBinding, Keymap, MouseHelp};
 
 pub type Binding = KitBinding<Action>;
 
@@ -632,7 +632,7 @@ const ALL_MODULES: &[Module] = &[Module::Sources, Module::Entries, Module::Reade
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shadow {
     pub module: Module,
-    /// The key spelling, exactly as [`starkit::keymap::KeySpec::parse`]
+    /// The key spelling, exactly as [`starcore::keymap::KeySpec::parse`]
     /// accepts it.
     pub keys: &'static str,
     pub module_action: Action,
@@ -895,7 +895,7 @@ pub fn document() -> String {
         out.push_str(&format!(
             "| {keys:<width$} | {} |\n",
             b.label,
-            width = starkit::keymap::KEYS_COLUMN
+            width = starcore::keymap::KEYS_COLUMN
         ));
     }
 
@@ -906,7 +906,7 @@ pub fn document() -> String {
             m.group,
             m.gesture,
             m.label,
-            width = starkit::keymap::GESTURE_COLUMN
+            width = starcore::keymap::GESTURE_COLUMN
         ));
     }
     out
@@ -923,7 +923,7 @@ fn module_name(m: Module) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use starkit::keymap::KeySpec;
+    use starcore::keymap::KeySpec;
 
     fn plain(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
@@ -938,7 +938,7 @@ mod tests {
     }
 
     fn specs(b: &Binding) -> Vec<KeySpec> {
-        starkit::keymap::alternatives(b.keys)
+        starcore::keymap::alternatives(b.keys)
             .filter_map(KeySpec::parse)
             .collect()
     }
@@ -1010,7 +1010,7 @@ mod tests {
     fn every_binding_reaches_its_action() {
         for b in BINDINGS {
             let mut reachable = false;
-            for alt in starkit::keymap::alternatives(b.keys) {
+            for alt in starcore::keymap::alternatives(b.keys) {
                 if alt == "o<n>" {
                     // The one chord whose action is the chord itself: the
                     // number comes from `o_prefix`, not from a key table.

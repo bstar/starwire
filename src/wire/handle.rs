@@ -52,7 +52,7 @@ pub enum RefreshScope {
 /// A setting the running core will change its mind about.
 ///
 /// Runtime only. The window writes `config.toml` itself through
-/// `starkit::config::edit` and sends one of these so the change takes effect
+/// `starcore::config::edit` and sends one of these so the change takes effect
 /// without a restart; the player's argv and the request timeout have no
 /// variant here because they are read where a restart is the honest answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

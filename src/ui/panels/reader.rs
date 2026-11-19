@@ -48,12 +48,12 @@
 
 use std::sync::Arc;
 
-use starkit::chrome::frame::{self, Badge, Tone};
-use starkit::chrome::scrollbar;
-use starkit::ratatui::buffer::Buffer;
-use starkit::ratatui::layout::Rect;
-use starkit::ratatui::style::{Modifier, Style};
-use starkit::ratatui::text::Line;
+use starcore::chrome::frame::{self, Badge, Tone};
+use starcore::chrome::scrollbar;
+use starcore::ratatui::buffer::Buffer;
+use starcore::ratatui::layout::Rect;
+use starcore::ratatui::style::{Modifier, Style};
+use starcore::ratatui::text::Line;
 
 use super::{rgb, width_of, words, ModuleId};
 use crate::ui::markdown::layout::Rendered;
@@ -231,7 +231,7 @@ fn head(v: &View<'_>, width: u16) -> Vec<(String, Ink)> {
         return Vec::new();
     }
     let wrapped = |text: &str, ink: Ink| -> Vec<(String, Ink)> {
-        starkit::wrap::wrap(text, width)
+        starcore::wrap::wrap(text, width)
             .iter()
             .map(|row| (row.drawn(text).to_string(), ink))
             .collect()
@@ -290,7 +290,7 @@ pub fn status_word(v: &View<'_>) -> Option<(&'static str, Tone)> {
 pub fn render(area: Rect, buf: &mut Buffer, v: &View<'_>, bars: &mut Bars) {
     let t = v.theme;
     let word_list = words(ModuleId::Reader);
-    let core: &starkit::theme::Theme = t;
+    let core: &starcore::theme::Theme = t;
     let badge = status_word(v).map(|(text, tone)| Badge { text, tone });
     let detail = v.open.then_some(v.title);
     let body = frame::frame(
@@ -312,7 +312,7 @@ pub fn render(area: Rect, buf: &mut Buffer, v: &View<'_>, bars: &mut Bars) {
     }
 
     if !v.open {
-        starkit::chrome::empty(body, buf, t, "nothing open");
+        starcore::chrome::empty(body, buf, t, "nothing open");
         return;
     }
 
@@ -457,7 +457,7 @@ fn cut(text: &str, width: u16) -> String {
     }
     let mut out = String::new();
     let mut used = 0u16;
-    for (_, cluster) in starkit::wrap::clusters(text) {
+    for (_, cluster) in starcore::wrap::clusters(text) {
         let w = width_of(cluster);
         if used + w > width {
             break;
@@ -476,7 +476,7 @@ fn centred(area: Rect, buf: &mut Buffer, text: &str, style: Style) {
     if area.height == 0 || area.width == 0 {
         return;
     }
-    let fitted = starkit::text::fit(text, area.width);
+    let fitted = starcore::text::fit(text, area.width);
     let trimmed = fitted.trim_end();
     let x = area.x + area.width.saturating_sub(width_of(trimmed)) / 2;
     buf.set_string(x, area.y + area.height / 2, trimmed, style);

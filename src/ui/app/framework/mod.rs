@@ -1,14 +1,14 @@
-//! KIT-owned application shell. The reader's stack and workers remain in WIRE.
+//! CORE-owned application shell. The reader's stack and workers remain in WIRE.
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use starkit::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use starkit::native_surface::{
+use starcore::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use starcore::native_surface::{
     style::{hex, Palette, Style as NativeStyle},
     PixelRect, Surface,
 };
-use starkit::ratatui::{buffer::Buffer, layout::Rect, style::Modifier, widgets::Widget};
-use starkit::ui::{
+use starcore::ratatui::{buffer::Buffer, layout::Rect, style::Modifier, widgets::Widget};
+use starcore::ui::{
     application::{Application, Host},
     command::{Command as UiCommand, Scope},
     content::Content,
@@ -29,8 +29,8 @@ pub struct Framework {
     layout_changed: bool,
     focused: Option<Id>,
     reader_hit: Option<ReaderHit>,
-    effects: Vec<starkit::terminal_graphics::protocol::ServerMessage>,
-    urls: starkit::terminal_graphics::frontend_actions::Requests,
+    effects: Vec<starcore::terminal_graphics::protocol::ServerMessage>,
+    urls: starcore::terminal_graphics::frontend_actions::Requests,
 }
 
 struct ReaderHit {
@@ -109,7 +109,7 @@ impl Application for Framework {
     fn intercept_key(&mut self, key: KeyEvent) -> bool {
         self.key_chord(key)
     }
-    fn theme(&self) -> Option<starkit::theme::Theme> {
+    fn theme(&self) -> Option<starcore::theme::Theme> {
         Some((*self.app.theme).clone())
     }
     fn tick(&mut self) -> bool {
@@ -152,22 +152,22 @@ impl Application for Framework {
     fn closed(&self) -> bool {
         self.app.quit
     }
-    fn effects(&mut self) -> Vec<starkit::terminal_graphics::protocol::ServerMessage> {
+    fn effects(&mut self) -> Vec<starcore::terminal_graphics::protocol::ServerMessage> {
         let mut effects = std::mem::take(&mut self.effects);
         effects.extend(self.urls.drain().map(|message| {
-            starkit::terminal_graphics::protocol::ServerMessage::FrontendAction { message }
+            starcore::terminal_graphics::protocol::ServerMessage::FrontendAction { message }
         }));
         effects
     }
     fn capabilities(
         &mut self,
-        capabilities: starkit::terminal_graphics::capabilities::Capabilities,
+        capabilities: starcore::terminal_graphics::capabilities::Capabilities,
     ) {
         self.urls.set_available(capabilities.open_urls_v1);
     }
     fn frontend_action(
         &mut self,
-        message: starkit::terminal_graphics::frontend_actions::ToHost,
+        message: starcore::terminal_graphics::frontend_actions::ToHost,
     ) -> bool {
         match self.urls.receive(message) {
             Some(Ok(())) => self.app.say("Link sent to your local browser"),
@@ -188,7 +188,7 @@ impl Application for Framework {
 }
 
 pub fn run() -> anyhow::Result<()> {
-    use starkit::terminal_graphics::{
+    use starcore::terminal_graphics::{
         application::Application as Session, client::PresentationPreference,
     };
     let cells = std::env::args().any(|arg| arg == "--cells");
@@ -206,7 +206,7 @@ pub fn run() -> anyhow::Result<()> {
         use clap::Parser;
         let cli = crate::cli::Cli::try_parse()?;
         if let Some(host) = cli.ssh {
-            use starkit::terminal_graphics::client::{self, Launch, PresentationOptions};
+            use starcore::terminal_graphics::client::{self, Launch, PresentationOptions};
             return client::run_with_preference(
                 Launch {
                     executable: cli.remote_executable.unwrap_or_else(|| "starwire".into()),
@@ -252,7 +252,7 @@ pub fn run() -> anyhow::Result<()> {
                 cfg,
                 cfg_path,
                 crate::paths::PATHS.session_file().ok(),
-                starkit::graphics::Graphics::disabled(),
+                starcore::graphics::Graphics::disabled(),
             );
             let theme = (*app.theme).clone();
             Host::new(Framework::new(app), theme)

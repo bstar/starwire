@@ -105,7 +105,7 @@ impl Framework {
                 ModuleId::Entries => self.entries(),
                 ModuleId::Reader => Node::new(
                     "reader",
-                    starkit::ui::Widget::Custom {
+                    starcore::ui::Widget::Custom {
                         fallback: "Choose an article to read".into(),
                         revision: self.stamp(),
                     },
@@ -135,9 +135,9 @@ impl Framework {
             Size::fixed(3)
         })
         .overflow(if active {
-            starkit::ui::Overflow::Keep
+            starcore::ui::Overflow::Keep
         } else {
-            starkit::ui::Overflow::Hide
+            starcore::ui::Overflow::Hide
         })
         .priority(if active { 100 } else { 1 })
     }
@@ -295,7 +295,7 @@ impl Framework {
                 vec![
                     Node::new(
                         "picture",
-                        starkit::ui::Widget::Custom {
+                        starcore::ui::Widget::Custom {
                             fallback: picture.current().url.clone(),
                             revision: self.app.pictures_gen,
                         },
@@ -322,8 +322,8 @@ impl Framework {
                 Node::button("add-button", "add"),
                 Node::button("refresh-button", "refresh"),
                 Node::button("settings-button", "settings"),
-                Node::button("help-button", "kit.help"),
-                Node::button("quit-button", "kit.quit"),
+                Node::button("help-button", "core.help"),
+                Node::button("quit-button", "core.quit"),
             ],
         )
         .height(Size::fixed(1))
@@ -346,7 +346,7 @@ impl Framework {
             .unwrap_or("");
         children.push(Node::new(
             "status",
-            starkit::ui::Widget::Status(format!(
+            starcore::ui::Widget::Status(format!(
                 "{}  {}  {}",
                 self.app.progress_line.as_deref().unwrap_or(note),
                 self.app.right_line,

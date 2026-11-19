@@ -21,7 +21,7 @@ Read the whole thing.
 The graphical reader preview runs with `starwire --graphical`; F9 switches
 between graphics and cells while keeping the same reader session. Use
 `starwire --cells` to open that preview directly in cells. Its panes, tables,
-fields and dialogs use STAR/KIT's application host.
+fields and dialogs use STAR/CORE's application host.
 
 Article pictures currently appear as text placeholders in the preview. Image
 fidelity, reader scrollbar dragging, row styles and complete keyboard parity remain

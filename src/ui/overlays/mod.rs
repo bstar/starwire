@@ -36,11 +36,11 @@ pub mod settings;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use starkit::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use starkit::keymap::{help_rect, HelpView};
-use starkit::ratatui::buffer::Buffer;
-use starkit::ratatui::layout::Rect;
-use starkit::ratatui::widgets::Widget;
+use starcore::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use starcore::keymap::{help_rect, HelpView};
+use starcore::ratatui::buffer::Buffer;
+use starcore::ratatui::layout::Rect;
+use starcore::ratatui::widgets::Widget;
 
 use crate::config::Config;
 use crate::ui::keymap::{BINDINGS, MOUSE};
@@ -300,15 +300,15 @@ impl Overlays {
                 }
                 settings::Action::Quit => (true, Answer::Quit),
             },
-            Overlay::Confirm(c) => match starkit::chrome::confirm::answer(k) {
-                starkit::chrome::confirm::Answer::Yes => {
+            Overlay::Confirm(c) => match starcore::chrome::confirm::answer(k) {
+                starcore::chrome::confirm::Answer::Yes => {
                     (true, Answer::Confirmed(c.pending.clone()))
                 }
-                starkit::chrome::confirm::Answer::No => (true, Answer::Closed),
+                starcore::chrome::confirm::Answer::No => (true, Answer::Closed),
                 // `ctrl+c` is caught above, so this arm is unreached in
                 // practice; kept exhaustive rather than assumed away.
-                starkit::chrome::confirm::Answer::Quit => (true, Answer::Quit),
-                starkit::chrome::confirm::Answer::Waiting => (false, Answer::Consumed),
+                starcore::chrome::confirm::Answer::Quit => (true, Answer::Quit),
+                starcore::chrome::confirm::Answer::Waiting => (false, Answer::Consumed),
             },
             Overlay::Search(s) => match s.handle(k) {
                 search::Action::Taken => (false, Answer::Consumed),
@@ -361,7 +361,7 @@ impl Overlays {
             }
             Overlay::Settings(s) => {
                 let rows = s.rows(cfg).len();
-                if !inside(starkit::chrome::settings::rect(area, rows), x, y) {
+                if !inside(starcore::chrome::settings::rect(area, rows), x, y) {
                     (true, Answer::Closed)
                 } else {
                     match s.click(area, x, y) {
@@ -435,10 +435,10 @@ impl Overlays {
         self.placed = None;
         match self.current.as_mut()? {
             Overlay::Help { scroll } => {
-                // `HelpView` takes STAR/KIT's own `Theme`, which this crate's
+                // `HelpView` takes STAR/CORE's own `Theme`, which this crate's
                 // wrapper derefs to; a struct literal is not a coercion site,
                 // so the target type is spelled out to reach it.
-                let core: &starkit::theme::Theme = theme;
+                let core: &starcore::theme::Theme = theme;
                 HelpView {
                     theme: core,
                     bindings: BINDINGS,

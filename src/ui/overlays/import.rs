@@ -23,12 +23,12 @@
 
 use std::path::{Path, PathBuf};
 
-use starkit::chrome::overlay::{self, Anchor};
-use starkit::crossterm::event::{KeyCode, KeyEvent};
-use starkit::input::{Edit, TextInput};
-use starkit::ratatui::buffer::Buffer;
-use starkit::ratatui::layout::Rect;
-use starkit::ratatui::style::Style;
+use starcore::chrome::overlay::{self, Anchor};
+use starcore::crossterm::event::{KeyCode, KeyEvent};
+use starcore::input::{Edit, TextInput};
+use starcore::ratatui::buffer::Buffer;
+use starcore::ratatui::layout::Rect;
+use starcore::ratatui::style::Style;
 
 use crate::ui::panels::rgb;
 use crate::ui::theme::Theme;
@@ -348,7 +348,7 @@ fn wrapped_rows(i: &Import, width: u16) -> usize {
             if *kind == Row::Field || text.is_empty() {
                 1
             } else {
-                starkit::wrap::wrap(text, width).len()
+                starcore::wrap::wrap(text, width).len()
             }
         })
         .sum()
@@ -362,7 +362,7 @@ pub fn render(area: Rect, buf: &mut Buffer, theme: &Theme, i: &mut Import) -> Op
     let rows = i.rows();
     let title = i.title();
     let footer = i.footer();
-    let core: &starkit::theme::Theme = theme;
+    let core: &starcore::theme::Theme = theme;
     let inner = overlay::render(
         r,
         buf,
@@ -412,7 +412,7 @@ pub fn render(area: Rect, buf: &mut Buffer, theme: &Theme, i: &mut Import) -> Op
             Row::Error => theme.error,
             Row::Field => theme.fg,
         };
-        for row in starkit::wrap::wrap(text, width) {
+        for row in starcore::wrap::wrap(text, width) {
             if y >= inner.y + inner.height {
                 break;
             }
@@ -432,7 +432,7 @@ pub fn render(area: Rect, buf: &mut Buffer, theme: &Theme, i: &mut Import) -> Op
 mod tests {
     use super::*;
     use crate::ui::theme::tests_support::theme;
-    use starkit::crossterm::event::KeyModifiers;
+    use starcore::crossterm::event::KeyModifiers;
 
     fn key(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)

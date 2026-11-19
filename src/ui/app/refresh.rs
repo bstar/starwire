@@ -14,7 +14,7 @@
 
 use std::collections::BTreeSet;
 
-use starkit::chrome::frame::Tone;
+use starcore::chrome::frame::Tone;
 
 use crate::ui::panels::ModuleId;
 use crate::ui::panels::{entries, sources};

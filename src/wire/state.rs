@@ -1184,7 +1184,7 @@ fn done_pending(state: &mut State, entries: Vec<(EntryId, String)>) -> Effects {
 
 /// Whether a URL is one this program will fetch.
 ///
-/// Only `https`, which is not this function's opinion: the agent STAR/KIT
+/// Only `https`, which is not this function's opinion: the agent STAR/CORE
 /// builds refuses plaintext, so an `http:` picture would fail a request
 /// anyway and is answered here instead, without one. A `data:` URI has
 /// already been dropped by the extractor's own pre-pass -- this is the
@@ -2547,7 +2547,7 @@ mod tests {
 
     fn picture(path: Option<&str>) -> Arc<Picture> {
         Arc::new(Picture {
-            image: Arc::new(starkit::image::RgbaImage::new(2, 2)),
+            image: Arc::new(starcore::image::RgbaImage::new(2, 2)),
             natural: (64, 32),
             path: path.map(std::path::PathBuf::from),
         })

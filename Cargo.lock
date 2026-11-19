@@ -3111,9 +3111,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
-name = "starkit"
-version = "0.24.0"
-source = "git+https://github.com/bstar/starkit?tag=v0.24.0#ccaf9207bacc6e6e2aaac69d16137fccbcc60650"
+name = "starcore"
+version = "0.25.0"
+source = "git+https://github.com/bstar/starcore?tag=v0.25.0#8c72e94fc0d74a71371b5da640dd4ae8e0bf86f7"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3165,7 +3165,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "starkit",
+ "starcore",
  "tempfile",
  "thiserror 2.0.20",
  "toml",

@@ -11,7 +11,7 @@
 //! function in `keymap.rs` itself is a pure function of one key, which is
 //! what makes the table testable without an `App` at all.
 
-use starkit::crossterm::event::{KeyCode, KeyEvent};
+use starcore::crossterm::event::{KeyCode, KeyEvent};
 
 use crate::ui::keymap::{self, OChord};
 use crate::ui::markdown;

@@ -1,7 +1,7 @@
 //! "Are you sure?" -- two shapes of it: removing a feed, and marking a
 //! whole source read.
 //!
-//! The box is STAR/KIT's `chrome::confirm`, answered with `y`/`n` rather
+//! The box is STAR/CORE's `chrome::confirm`, answered with `y`/`n` rather
 //! than `enter` for the reason that widget documents: a dialogue whose
 //! default key is the one already under a reader's thumb is a dialogue that
 //! answers a keystroke meant for whatever came before it.
@@ -11,9 +11,9 @@
 //! `wire.db` is not a cache; marking forty entries read cannot be undone in
 //! one key the way `m` undoes one.
 
-use starkit::chrome::confirm;
-use starkit::ratatui::buffer::Buffer;
-use starkit::ratatui::layout::Rect;
+use starcore::chrome::confirm;
+use starcore::ratatui::buffer::Buffer;
+use starcore::ratatui::layout::Rect;
 
 use crate::ui::theme::Theme;
 use crate::wire::feed::{FeedId, Selection};
@@ -67,7 +67,7 @@ impl Confirm {
 }
 
 /// This question, as the shared widget spells it.
-fn kit(c: &Confirm) -> confirm::Confirm {
+fn core_confirm(c: &Confirm) -> confirm::Confirm {
     confirm::Confirm {
         title: c.title.clone(),
         body: c.body.clone(),
@@ -79,11 +79,11 @@ fn kit(c: &Confirm) -> confirm::Confirm {
 /// Where the box lands and where its two answers sit, read straight through
 /// to `chrome::confirm`'s own so a click cannot disagree with what was drawn.
 pub(super) fn layout(area: Rect, c: &Confirm) -> Option<confirm::Layout> {
-    confirm::layout(area, &kit(c))
+    confirm::layout(area, &core_confirm(c))
 }
 
 pub fn render(area: Rect, buf: &mut Buffer, theme: &Theme, c: &Confirm) {
-    confirm::render(area, buf, theme, &kit(c));
+    confirm::render(area, buf, theme, &core_confirm(c));
 }
 
 #[cfg(test)]
@@ -146,7 +146,7 @@ mod tests {
         let l = layout(area, &c).expect("it fits");
         assert!(l.body_rows.len() > 1);
         for row in &l.body_rows {
-            assert!(starkit::wrap::width_of(row) < l.inner.width, "{row:?}");
+            assert!(starcore::wrap::width_of(row) < l.inner.width, "{row:?}");
         }
     }
 }

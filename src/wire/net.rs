@@ -2,7 +2,7 @@
 //!
 //! Every byte this program did not write itself comes through [`Http::get`].
 //! That is the point of the trait: the live implementation is a thin wrapper
-//! over the agent STAR/KIT hands back, and [`Replay`] serves a directory of
+//! over the agent STAR/CORE hands back, and [`Replay`] serves a directory of
 //! files instead, so the whole of fetching, parsing and extraction can be
 //! tested -- and demonstrated, with `starwire --replay` -- without a socket.
 //!
@@ -11,7 +11,7 @@
 //! file is per host: a loop that takes no lease reaches the second host at
 //! whatever rate the first one answered. See `MAX_REDIRECTS`.
 //!
-//! **https only.** The agent STAR/KIT builds refuses plaintext, and that is
+//! **https only.** The agent STAR/CORE builds refuses plaintext, and that is
 //! kept rather than relaxed. It costs one thing: `http://old.reddit.com` in a
 //! newsboat `urls` file does not work as typed. The answer is to rewrite
 //! `http` to `https` on the way in (see [`crate::wire::youtube::canonicalise`])
@@ -321,7 +321,7 @@ fn accept_headers(options: &RequestOptions) -> (Option<&str>, Option<&'static st
 /// rather than to extract one.
 const MAX_REDIRECTS: usize = 5;
 
-/// The real thing: `ureq` on the agent STAR/KIT configures.
+/// The real thing: `ureq` on the agent STAR/CORE configures.
 pub struct Live {
     agent: ureq::Agent,
     politeness: Politeness,
@@ -329,7 +329,7 @@ pub struct Live {
 
 impl Live {
     pub fn new(cfg: &super::WireConfig) -> Self {
-        let agent: ureq::Agent = starkit::net::builder(&cfg.user_agent())
+        let agent: ureq::Agent = starcore::net::builder(&cfg.user_agent())
             .https_only(true)
             // Zero means ureq returns the 3xx as it is; `get` walks the chain
             // itself. See MAX_REDIRECTS.

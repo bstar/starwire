@@ -17,20 +17,20 @@ pub mod sources;
 use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
-use starkit::chrome::header;
-use starkit::ratatui::buffer::Buffer;
-use starkit::ratatui::layout::Rect;
-use starkit::ratatui::style::Style;
+use starcore::chrome::header;
+use starcore::ratatui::buffer::Buffer;
+use starcore::ratatui::layout::Rect;
+use starcore::ratatui::style::Style;
 
 use super::keymap::Module;
 
-// The border, corners, titles and header row are STAR/KIT's, and so are the
+// The border, corners, titles and header row are STAR/CORE's, and so are the
 // small text helpers every panel would otherwise keep its own copy of.
 // Re-exported under their old names so the panels to come keep the imports
 // the family's other applications already have.
-pub use starkit::chrome::rgb;
-pub use starkit::text::fit;
-pub use starkit::wrap::width_of;
+pub use starcore::chrome::rgb;
+pub use starcore::text::fit;
+pub use starcore::wrap::width_of;
 
 /// The three modules of the column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -91,7 +91,7 @@ pub fn filter_style(t: &super::theme::Theme, typing: bool) -> Style {
     if typing {
         Style::default()
             .fg(rgb(t.accent))
-            .add_modifier(starkit::ratatui::style::Modifier::BOLD)
+            .add_modifier(starcore::ratatui::style::Modifier::BOLD)
     } else {
         Style::default().fg(rgb(t.warn))
     }
@@ -155,7 +155,7 @@ pub fn elide_middle(text: &str, width: u16) -> String {
     let keep = usize::from(width - 1);
     let head = keep / 2;
     let tail = keep - head;
-    let clusters: Vec<&str> = starkit::wrap::clusters(text).map(|(_, c)| c).collect();
+    let clusters: Vec<&str> = starcore::wrap::clusters(text).map(|(_, c)| c).collect();
     let mut out = String::new();
     let mut used = 0usize;
     for c in &clusters {

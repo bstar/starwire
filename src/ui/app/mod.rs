@@ -49,11 +49,11 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use starkit::crossterm::event::{self, Event as TermEvent, KeyEventKind};
-use starkit::graphics::{Graphics, Mode};
-use starkit::input::TextInput;
-use starkit::mouse::ClickTracker;
-use starkit::term::{self, Tui};
+use starcore::crossterm::event::{self, Event as TermEvent, KeyEventKind};
+use starcore::graphics::{Graphics, Mode};
+use starcore::input::TextInput;
+use starcore::mouse::ClickTracker;
+use starcore::term::{self, Tui};
 
 use super::keymap::Action;
 use super::layout::LayoutState;
@@ -1334,7 +1334,7 @@ impl App {
         self.write_setting(
             "reading",
             "width",
-            starkit::config::edit::Value::Int(i64::from(next)),
+            starcore::config::edit::Value::Int(i64::from(next)),
         );
         self.say(format!("{next} columns"));
     }
@@ -1344,9 +1344,9 @@ impl App {
         &mut self,
         section: &str,
         key: &str,
-        value: starkit::config::edit::Value,
+        value: starcore::config::edit::Value,
     ) {
-        if let Err(e) = starkit::config::edit::set(&self.cfg_path, section, key, &value) {
+        if let Err(e) = starcore::config::edit::set(&self.cfg_path, section, key, &value) {
             tracing::warn!("could not save {section}.{key}: {e}");
             self.warn(format!("could not save {key}"));
         }
@@ -1371,7 +1371,7 @@ impl App {
         self.write_setting(
             "ui",
             "theme",
-            starkit::config::edit::Value::Str(name.clone()),
+            starcore::config::edit::Value::Str(name.clone()),
         );
         self.say(format!("theme: {name}"));
     }
@@ -1715,7 +1715,7 @@ impl App {
     pub(crate) fn open_picture_for_tests(&mut self, n: usize) {
         let regions = self.layout.last.clone().expect("a frame has been drawn");
         let rect = regions.rect_of(ModuleId::Reader);
-        let body = starkit::chrome::header::body(rect);
+        let body = starcore::chrome::header::body(rect);
         let cols = super::panels::reader::text_cols(body.width, self.cfg.reading.width);
         let cap_rows = self.cap_rows(body.height);
         let shown: Vec<overlays::picture::Shown> = self
@@ -1854,9 +1854,9 @@ mod tests {
     use super::*;
     use crate::ui::fake;
     use crate::ui::overlays::Overlay;
-    use starkit::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-    use starkit::ratatui::buffer::Buffer;
-    use starkit::ratatui::layout::Rect;
+    use starcore::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+    use starcore::ratatui::buffer::Buffer;
+    use starcore::ratatui::layout::Rect;
 
     fn key(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
@@ -2157,7 +2157,7 @@ mod tests {
             .as_ref()
             .expect("a drawn frame")
             .rect_of(ModuleId::Reader);
-        let body = starkit::chrome::header::body(rect).height;
+        let body = starcore::chrome::header::body(rect).height;
         let rows = super::super::panels::reader::text_rows(rect, &app.reader_view(None))
             .expect("an open reader");
         assert!(
@@ -2510,11 +2510,12 @@ mod tests {
         draw(&mut app);
         let regions = app.layout.last.clone().expect("a layout");
         let rect = regions.rect_of(ModuleId::Sources);
-        let body = starkit::chrome::frame::body(rect, &crate::ui::panels::words(ModuleId::Sources));
+        let body =
+            starcore::chrome::frame::body(rect, &crate::ui::panels::words(ModuleId::Sources));
         // The crumb row is the first; the list starts under it.
         let y = body.y + 1 + 3;
         app.mouse(MouseEvent {
-            kind: MouseEventKind::Down(starkit::crossterm::event::MouseButton::Left),
+            kind: MouseEventKind::Down(starcore::crossterm::event::MouseButton::Left),
             column: body.x + 3,
             row: y,
             modifiers: KeyModifiers::NONE,

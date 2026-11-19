@@ -1,5 +1,5 @@
 use super::*;
-use starkit::ui::{command::Registry, Runtime, Viewport};
+use starcore::ui::{command::Registry, Runtime, Viewport};
 
 fn fixture() -> (Framework, crate::ui::fake::Fake) {
     let cfg = crate::config::Config::default();
@@ -9,7 +9,7 @@ fn fixture() -> (Framework, crate::ui::fake::Fake) {
         cfg,
         std::path::PathBuf::from("/unused/config.toml"),
         None,
-        starkit::graphics::Graphics::disabled(),
+        starcore::graphics::Graphics::disabled(),
     );
     fake.pump();
     let mut app = Framework::new(app);
@@ -94,7 +94,7 @@ fn shared_lists_open_the_real_source_and_article_without_changing_the_database_c
     app.app.set_cursor(ModuleId::Entries, index);
     app.handle_command(&format!("action-{copy}"));
     assert!(
-        matches!(app.effects().as_slice(),[starkit::terminal_graphics::protocol::ServerMessage::Clipboard {text}] if *text == expected)
+        matches!(app.effects().as_slice(),[starcore::terminal_graphics::protocol::ServerMessage::Clipboard {text}] if *text == expected)
     );
     assert!(
         app.effects().is_empty(),
@@ -138,7 +138,7 @@ fn shared_fields_preserve_search_submission_and_confirmation_defaults() {
 
 #[test]
 fn reader_links_use_frontend_requests_and_keep_chords_and_detach_cleanup() {
-    use starkit::terminal_graphics::{
+    use starcore::terminal_graphics::{
         frontend_actions::{Error, ToClient, ToHost},
         protocol::ServerMessage,
     };
@@ -171,7 +171,7 @@ fn reader_links_use_frontend_requests_and_keep_chords_and_detach_cleanup() {
     };
     assert_eq!(
         *url,
-        starkit::terminal_graphics::frontend_actions::web_url(&expected).unwrap()
+        starcore::terminal_graphics::frontend_actions::web_url(&expected).unwrap()
     );
     assert!(!app.frontend_action(ToHost::Result {
         id: id + 1,
@@ -228,7 +228,7 @@ fn shared_shell_and_all_modal_shapes_stay_bounded_across_presentations() {
             ui.render_cells_with(Viewport::cells(width, height), &mut app)
                 .unwrap();
             ui.render_scene_with(
-                starkit::terminal_graphics::Viewport {
+                starcore::terminal_graphics::Viewport {
                     columns: width,
                     rows: height,
                     width: u32::from(width) * 8,

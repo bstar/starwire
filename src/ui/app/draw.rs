@@ -2,7 +2,7 @@
 //!
 //! The order is fixed: the background, the three modules top to bottom, the
 //! pictures, the status row, then whatever overlay is open -- last, because
-//! it is drawn over everything and STAR/KIT's own `chrome::overlay` clears
+//! it is drawn over everything and STAR/CORE's own `chrome::overlay` clears
 //! the cells under it first.
 //!
 //! The pictures are a pass of their own, between the reader and the status
@@ -20,11 +20,11 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use starkit::chrome::header;
-use starkit::graphics::ImageId;
-use starkit::ratatui::buffer::Buffer;
-use starkit::ratatui::layout::Rect;
-use starkit::ratatui::style::{Modifier, Style};
+use starcore::chrome::header;
+use starcore::graphics::ImageId;
+use starcore::ratatui::buffer::Buffer;
+use starcore::ratatui::layout::Rect;
+use starcore::ratatui::style::{Modifier, Style};
 
 use crate::ui::layout;
 use crate::ui::panels::{self, entries, reader, rgb, sources, ModuleId};
@@ -180,7 +180,7 @@ impl App {
         self.graphics.set_capacity(places.len() + 8);
 
         let (cw, ch) = self.cell();
-        let faint = starkit::ratatui::style::Style::default().fg(rgb(self.theme.dim));
+        let faint = starcore::ratatui::style::Style::default().fg(rgb(self.theme.dim));
         for place in &places {
             let slot = &rendered.pictures[place.index];
             match self.view.pictures.get(&slot.url) {
@@ -494,13 +494,13 @@ pub(super) fn too_small(area: Rect, buf: &mut Buffer, theme: &Theme) {
 /// Where a list may be scrolled to: far enough to keep the cursor drawn, and
 /// never past the last page.
 ///
-/// STAR/KIT's own rule is the first half, which is all a list that only ever
+/// STAR/CORE's own rule is the first half, which is all a list that only ever
 /// grows and shrinks at the bottom needs. A filter takes rows away from
 /// under a list that is already scrolled -- forty feeds narrowed to three,
 /// with the view a page down -- and without the second half those three are
 /// drawn off the top of the panel.
 fn clamp(cursor: usize, at: usize, rows: usize, len: usize) -> usize {
-    starkit::list::clamp_scroll(cursor, at, rows).min(len.saturating_sub(rows))
+    starcore::list::clamp_scroll(cursor, at, rows).min(len.saturating_sub(rows))
 }
 
 /// Where each module's list can scroll to, given what the last layout drew.

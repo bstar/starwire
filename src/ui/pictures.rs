@@ -4,7 +4,7 @@
 //! whatever the terminal can do with them, which is one of three things and
 //! is decided per picture rather than once at startup.
 //!
-//! The order is STAR/CORD's, and the reasons are in `starkit`'s
+//! The order is STAR/CORD's, and the reasons are in `starcore`'s
 //! `docs/graphics.md`:
 //!
 //! - `[ui] graphics = off` draws no picture at all. Off means off, not
@@ -16,7 +16,7 @@
 //!   placement and crops it; sixel and iTerm2 draw from the top left of
 //!   wherever they land whatever was asked for, so a picture half off the
 //!   top would be drawn over the status row and left there.
-//! - Otherwise a protocol, and [`starkit::graphics::mend_unit_placeholder`]
+//! - Otherwise a protocol, and [`starcore::graphics::mend_unit_placeholder`]
 //!   afterwards for the one-cell case the kitty renderer gets wrong.
 //!
 //! Cropping is this module's own, and it is why `cut_top` exists. A picture
@@ -26,13 +26,13 @@
 
 use std::sync::Arc;
 
-use starkit::graphics::{self, Graphics, ImageId, Mode};
-use starkit::image::RgbaImage;
-use starkit::ratatui::buffer::Buffer;
-use starkit::ratatui::layout::Rect;
-use starkit::ratatui::style::Style;
-use starkit::ratatui::widgets::Widget;
-use starkit::ratatui_image::Image;
+use starcore::graphics::{self, Graphics, ImageId, Mode};
+use starcore::image::RgbaImage;
+use starcore::ratatui::buffer::Buffer;
+use starcore::ratatui::layout::Rect;
+use starcore::ratatui::style::Style;
+use starcore::ratatui::widgets::Widget;
+use starcore::ratatui_image::Image;
 
 /// What a cell is taken to be when the terminal never said.
 ///
@@ -116,7 +116,7 @@ pub fn crop_rows(
         return Arc::clone(img);
     }
     let keep = keep.min(height - top).max(1);
-    Arc::new(starkit::image::imageops::crop_imm(&**img, 0, top, img.width(), keep).to_image())
+    Arc::new(starcore::image::imageops::crop_imm(&**img, 0, top, img.width(), keep).to_image())
 }
 
 /// The quiet block of `░` that stands where a picture is going to be.
@@ -131,7 +131,7 @@ pub fn placeholder(rect: Rect, buf: &mut Buffer, style: Style) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use starkit::image::Rgba;
+    use starcore::image::Rgba;
 
     fn picture(w: u32, h: u32) -> Arc<RgbaImage> {
         Arc::new(RgbaImage::from_fn(w, h, |_, y| {

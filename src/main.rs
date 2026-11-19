@@ -26,7 +26,7 @@ fn main() -> Result<()> {
         )
     }) {
         PATHS.init_private_dirs();
-        let _log = starkit::logging::init(&PATHS, false)?;
+        let _log = starcore::logging::init(&PATHS, false)?;
         return ui::app::framework::run();
     }
     let cli = cli::Cli::parse();
@@ -34,7 +34,7 @@ fn main() -> Result<()> {
     PATHS.init_private_dirs();
     // The guard must outlive everything that logs; dropping it early loses
     // whatever the writer thread had buffered.
-    let _log = starkit::logging::init(&PATHS, cli.verbose)?;
+    let _log = starcore::logging::init(&PATHS, cli.verbose)?;
 
     if cli.graphical || cli.cells || cli.ssh.is_some() {
         anyhow::ensure!(
@@ -855,7 +855,7 @@ fn run_export_opml(file: Option<&Path>) -> Result<()> {
         wire::import::opml::export(&feeds::list_feeds_with_unread(&db)?, &feeds::folders(&db)?)?;
     match file {
         Some(path) => {
-            starkit::fs::write_atomic(path, xml.as_bytes())
+            starcore::fs::write_atomic(path, xml.as_bytes())
                 .with_context(|| format!("writing {}", path.display()))?;
             eprintln!("wrote {}", path.display());
         }

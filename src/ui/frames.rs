@@ -23,7 +23,7 @@
 //! other frame stays on `Off`, where an image is the `[image: alt]` line and
 //! the frames are the ones 0.0.1 accepted.
 //!
-//! Every app here is built with [`starkit::graphics::Graphics::disabled`],
+//! Every app here is built with [`starcore::graphics::Graphics::disabled`],
 //! UTC, and the clock pinned to [`crate::wire::testing::now`] -- the same
 //! instant the fixture's own publication dates are measured from, so an age
 //! reads the same string whatever day this is run on. `App::set_tz` and
@@ -35,10 +35,10 @@
 
 use std::path::PathBuf;
 
-use starkit::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use starkit::graphics::{Graphics, Mode};
-use starkit::ratatui::buffer::Buffer;
-use starkit::ratatui::layout::Rect;
+use starcore::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use starcore::graphics::{Graphics, Mode};
+use starcore::ratatui::buffer::Buffer;
+use starcore::ratatui::layout::Rect;
 
 use super::app::App;
 use super::fake;

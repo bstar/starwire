@@ -7,7 +7,7 @@
 //! reach is either undiscoverable or tedious.
 //!
 //! Changing a row does two things -- it changes the running program, and it
-//! writes the key through [`starkit::config::edit`], which rewrites one line
+//! writes the key through [`starcore::config::edit`], which rewrites one line
 //! of `config.toml` and leaves every comment in the file alone. A settings
 //! overlay that serialised the whole struct back would silently delete the
 //! commentary the template was written to carry.
@@ -16,17 +16,17 @@
 //!
 //! `[player] video` -- the argv a video is handed to -- has no row, and that
 //! is a limit rather than a decision: it is an array of strings and
-//! `starkit::config::edit::Value` writes scalars. A row that changed the
+//! `starcore::config::edit::Value` writes scalars. A row that changed the
 //! player for this run and forgot it on the next would be worse than no row,
 //! so the player is edited in the file, where `docs/configuration.md` says
 //! it is.
 
-use starkit::chrome::settings::{self, SettingsView};
-use starkit::config::edit::Value;
-use starkit::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use starkit::ratatui::buffer::Buffer;
-use starkit::ratatui::layout::Rect;
-use starkit::ratatui::widgets::Widget;
+use starcore::chrome::settings::{self, SettingsView};
+use starcore::config::edit::Value;
+use starcore::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use starcore::ratatui::buffer::Buffer;
+use starcore::ratatui::layout::Rect;
+use starcore::ratatui::widgets::Widget;
 
 use crate::config::Config;
 use crate::ui::theme::Theme;
@@ -293,7 +293,7 @@ impl Settings {
         self.step(delta.signum() as isize);
     }
 
-    /// What a click landed on, through STAR/KIT's own hit test so a row that
+    /// What a click landed on, through STAR/CORE's own hit test so a row that
     /// scrolled out of sight is not a row anything can click. A click on a
     /// row steps it, exactly as `enter` on it would; a click off the list
     /// closes, which is what clicking outside a dialogue has always meant
@@ -317,7 +317,7 @@ impl Settings {
 
     pub fn render(&self, area: Rect, buf: &mut Buffer, theme: &Theme, cfg: &Config) {
         let rows = self.rows(cfg);
-        let core: &starkit::theme::Theme = theme;
+        let core: &starcore::theme::Theme = theme;
         SettingsView {
             theme: core,
             heading: "settings",
@@ -387,7 +387,7 @@ mod tests {
             let mut cfg = Config::default();
             let value = s.step(&mut cfg, true, &themes());
             let (section, key) = s.where_written();
-            let text = starkit::config::edit::apply("", section, key, &value);
+            let text = starcore::config::edit::apply("", section, key, &value);
             let read: Config =
                 toml::from_str(&text).unwrap_or_else(|e| panic!("{s:?}: {e}\n{text}"));
             assert_eq!(

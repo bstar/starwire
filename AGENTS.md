@@ -32,42 +32,42 @@ The tests that would use `yt-dlp` skip when it is not there.
 On a Mac with Xcode selected, `/usr/bin/git` is a shim that asks xcrun where
 git is, and inside `nix develop` xcrun is nix's, which answers `tool 'git' not
 found`. The devshell therefore carries nix's own git first on `PATH`, which is
-what cargo's CLI fetch of STAR/KIT uses.
+what cargo's CLI fetch of STAR/CORE uses.
 
-## STAR/KIT
+## STAR/CORE
 
 The shared foundation — paths, logging, private file writes, themes,
 keymap/help, chrome, text entry, wrapping, terminal graphics, and the HTTP
-agent's defaults — lives in `starkit`, the crate STAR/AMP, STAR/CORD and
+agent's defaults — lives in `starcore`, the crate STAR/AMP, STAR/CORD and
 STAR/FOLD use too. It is a git dependency pinned to a revision, and the flake
 takes it from the revision `Cargo.lock` names through
 `cargoLock.allowBuiltinFetchGit`.
 
 STAR/WIRE is the first consumer to turn the `net` feature on. `net::builder`
 is what `wire::net::Live` configures its agent from, so `ureq` is a direct
-dependency here as well as STAR/KIT's — the **same version**, deliberately, so
+dependency here as well as STAR/CORE's — the **same version**, deliberately, so
 there is one copy and one connection pool. A second `ureq` in the tree would
 mean `net::builder` handing back a type this crate cannot use.
 
 It is also the one copy of `ratatui`, `crossterm`, `ratatui-image` and `image`
-in the tree. Everything under `src/ui/` reaches them through `starkit::`, and
+in the tree. Everything under `src/ui/` reaches them through `starcore::`, and
 none of the four is a direct dependency: a widget built against a second copy
 of ratatui does not satisfy a signature expecting the first, and the compiler
 reports that as two versions carrying the same number.
 
-`src/paths.rs` is a name for `starkit::paths::Paths` and nothing else. Keep the
+`src/paths.rs` is a name for `starcore::paths::Paths` and nothing else. Keep the
 name: the core takes `crate::paths::Paths` by value throughout, and `PATHS` is
 the one place this application's three identifying strings are written down.
 
 A local checkout is used through an uncommitted `.cargo/config.toml`:
 
 ```toml
-[patch."https://github.com/bstar/starkit"]
-starkit = { path = "../starkit" }
+[patch."https://github.com/bstar/starcore"]
+starcore = { path = "../starcore" }
 ```
 
 `.gitignore` already covers it, and it has to be taken away again before
-anything is committed: with the patch in place `cargo` rewrites the `starkit`
+anything is committed: with the patch in place `cargo` rewrites the `starcore`
 entry in `Cargo.lock` to the path, and a lock file with no git source in it is
 one the flake cannot build. **Never commit `.cargo/config.toml`, and never
 commit a `Cargo.lock` written while it was in place** — this happened once in
@@ -76,12 +76,12 @@ entry and deleting the file. If `git status` ever shows `Cargo.lock` changed
 with no dependency version bump to explain it, check for this before anything
 else.
 
-Every public `starkit` item now has **four** consumers — check STAR/AMP,
+Every public `starcore` item now has **four** consumers — check STAR/AMP,
 STAR/CORD and STAR/FOLD before changing a signature.
 
 ## Shared panes
 
-`ui/layout.rs` supplies application sizing/opening policy to KIT's `panes`
+`ui/layout.rs` supplies application sizing/opening policy to CORE's `panes`
 engine. Solved rectangles drive rendering, hit testing and focus. User collapse
 and viewport fallback have separate reasons. Keep the core model independent
 of presentation and preserve the application's accordion/reader behavior.
@@ -139,7 +139,7 @@ page. A new one there needs a migration beside it — `canonicalise` runs when a
 feed is *added*, and nothing re-runs it over the feeds already in the file
 except `db::migrate`.
 
-The `http` rewrite is the one worth defending. The agent STAR/KIT builds
+The `http` rewrite is the one worth defending. The agent STAR/CORE builds
 refuses plaintext, and that is kept rather than relaxed, so
 `http://old.reddit.com/r/rust/.rss` — which is what a real `urls` file says —
 would otherwise simply fail. A second, plaintext agent is not the answer: it
@@ -377,15 +377,15 @@ or standalone Linux tarball build jobs. `scripts/build-dist.sh` accepts only
 `nix`, `appimage` and `macos`; branch release dispatches build artifacts without
 publishing, while version tags create a draft release.
 
-## KIT 0.13 candidate compatibility
+## CORE 0.13 candidate compatibility
 
-Development main pins an immutable KIT 0.13 candidate revision with a git-sourced
+Development main pins an immutable CORE 0.13 candidate revision with a git-sourced
 lockfile, so ordinary builds need no sibling checkout. This is an unreleased
 testing candidate; use immutable version tags when making a framework release.
 Keep dependency updates in their own commit, with the manifest and lock together.
 
-`scripts/check-kit.sh` checks every target and feature against the sibling KIT
-checkout in a disposable tracked copy. `STAR_KIT_CHECKOUT` selects another
+`scripts/check-core.sh` checks every target and feature against the sibling CORE
+checkout in a disposable tracked copy. `STAR_CORE_CHECKOUT` selects another
 candidate. No candidate path or path-patched lock is committed. Live canvases
 and embedded input are opt-in; ordinary application keys, media, SSH and
 presentation retain their current contracts.
@@ -394,7 +394,7 @@ The current pin aligns the shared engines and public UI candidate. It does not
 complete this application's migration to `ui::application::Host`; retain that
 migration and its behavioral/visual acceptance as separate work.
 
-2026-10-31: `--graphical` and `--cells` opt into the first KIT-owned hosted
+2026-10-31: `--graphical` and `--cells` opt into the first CORE-owned hosted
 shell under `ui/app/framework`. Plain invocation still uses the existing
 reader. Keep that default until migration parity is proven. The shared shell
 owns panes, table lists, standard fields/dialogs and focus; only article/picture
@@ -403,11 +403,11 @@ content occupies custom slots. The original core/stack and workers stay here.
 Offline fixture tests cover source → entries → article, search submission,
 safe confirmation defaults and bounded cell/native scenes. The private Kitty
 proof in `scripts/test-graphical-ui.py` uses replay data, exercises live modal
-field switching and injects zero coordinates. Pass `--kit` for KIT's public
+field switching and injects zero coordinates. Pass `--core` for CORE's public
 terminal fixture helper; it must never use the reader's database/configuration.
-Root Crossterm is patched to d4e9929 because KIT's patch is not inherited.
+Root Crossterm is patched to d4e9929 because CORE's patch is not inherited.
 CI runs this proof in private Kitty/Xvfb using fixture helpers from the exact
-KIT revision in `Cargo.lock`, and retains screenshots/logs as an artifact.
+CORE revision in `Cargo.lock`, and retains screenshots/logs as an artifact.
 The cell-only build remains a separate CI check.
 The proof's private configuration retains dated replay articles for 100 years
 and disables startup fetching. Otherwise the normal 30-day retention sweep can
@@ -419,11 +419,11 @@ picture/markdown fidelity, reader scrollbar dragging, row tones, full keyboard/m
 parity, resizing/recovery, SSH/frontend actions and performance before replacing
 the default or claiming this application migrated. The bundled font notice is
 under `LICENSES` and must remain in Nix, AppImage and macOS distributions.
-Link copying already uses KIT's bounded frontend clipboard effect. Browser/video
+Link copying already uses CORE's bounded frontend clipboard effect. Browser/video
 opening is disabled in this preview until frontend effects/media routing exists;
 never let the persistent host open a desktop program or play server-side audio
 as a substitute for the attaching frontend. Keep Help/report list selection in
 application state so a refresh cannot reset keyboard paging to the first item.
-The published KIT scrollbar candidate owns dragging for shared source, entry,
+The published CORE scrollbar candidate owns dragging for shared source, entry,
 Help and settings tables; article scrolling remains a custom-content migration
 gate. Cell modals now clear their backing cells before painting.

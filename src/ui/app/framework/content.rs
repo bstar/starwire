@@ -1,4 +1,4 @@
-//! Bounded article content; pane and dialog chrome belongs to KIT.
+//! Bounded article content; pane and dialog chrome belongs to CORE.
 use super::*;
 
 impl Content for Framework {
@@ -18,7 +18,7 @@ impl Content for Framework {
             .max()
             .unwrap_or(0);
         let mut head = 0;
-        for row in starkit::wrap::wrap(&self.app.head_title, width)
+        for row in starcore::wrap::wrap(&self.app.head_title, width)
             .iter()
             .take(2)
         {
@@ -30,7 +30,7 @@ impl Content for Framework {
                 head,
                 row.drawn(&self.app.head_title),
                 usize::from(width),
-                starkit::ratatui::style::Style::default()
+                starcore::ratatui::style::Style::default()
                     .fg(crate::ui::panels::rgb(self.app.theme.wire.heading_fg))
                     .add_modifier(Modifier::BOLD),
             );
@@ -43,7 +43,7 @@ impl Content for Framework {
                     head,
                     byline,
                     usize::from(width),
-                    starkit::ratatui::style::Style::default()
+                    starcore::ratatui::style::Style::default()
                         .fg(crate::ui::panels::rgb(self.app.theme.wire.byline_fg)),
                 );
                 head += 1;
@@ -91,7 +91,7 @@ impl Content for Framework {
             while x < buffer.area.width {
                 let cell = &buffer[(x, y)];
                 let ink = match cell.fg {
-                    starkit::ratatui::style::Color::Rgb(r, g, b) => hex([r, g, b]),
+                    starcore::ratatui::style::Color::Rgb(r, g, b) => hex([r, g, b]),
                     _ => style.colors.ink.clone(),
                 };
                 let mut text = String::new();
@@ -103,7 +103,7 @@ impl Content for Framework {
                 {
                     let glyph = buffer[(x, y)].symbol();
                     text.push_str(glyph);
-                    x += starkit::wrap::width_of(glyph).max(1);
+                    x += starcore::wrap::width_of(glyph).max(1);
                 }
                 surface.text(
                     PixelRect::new(

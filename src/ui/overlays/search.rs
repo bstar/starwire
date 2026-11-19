@@ -9,12 +9,12 @@
 //! Not to be confused with `/`, which narrows the rows already on screen and
 //! is not an overlay at all. `wire/search.rs`'s own doc has the distinction.
 
-use starkit::chrome::overlay::{self, Anchor};
-use starkit::crossterm::event::KeyEvent;
-use starkit::input::{Edit, TextInput};
-use starkit::ratatui::buffer::Buffer;
-use starkit::ratatui::layout::Rect;
-use starkit::ratatui::style::Style;
+use starcore::chrome::overlay::{self, Anchor};
+use starcore::crossterm::event::KeyEvent;
+use starcore::input::{Edit, TextInput};
+use starcore::ratatui::buffer::Buffer;
+use starcore::ratatui::layout::Rect;
+use starcore::ratatui::style::Style;
 
 use crate::ui::panels::rgb;
 use crate::ui::theme::Theme;
@@ -84,7 +84,7 @@ pub fn render(area: Rect, buf: &mut Buffer, theme: &Theme, s: &mut Search) -> Op
     if r.width < 10 || r.height < 3 {
         return None;
     }
-    let core: &starkit::theme::Theme = theme;
+    let core: &starcore::theme::Theme = theme;
     let inner = overlay::render(
         r,
         buf,
@@ -120,7 +120,7 @@ pub fn render(area: Rect, buf: &mut Buffer, theme: &Theme, s: &mut Search) -> Op
 mod tests {
     use super::*;
     use crate::ui::theme::tests_support::theme;
-    use starkit::crossterm::event::{KeyCode, KeyModifiers};
+    use starcore::crossterm::event::{KeyCode, KeyModifiers};
 
     fn key(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)

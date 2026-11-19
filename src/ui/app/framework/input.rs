@@ -1,4 +1,4 @@
-//! Domain commands/events around KIT-owned editing and navigation.
+//! Domain commands/events around CORE-owned editing and navigation.
 use super::*;
 
 impl Framework {
@@ -47,7 +47,7 @@ impl Framework {
         if let Some(url) = url.filter(|url| url.len() <= 8192) {
             if self.effects.len() < 8 {
                 self.effects.push(
-                    starkit::terminal_graphics::protocol::ServerMessage::Clipboard { text: url },
+                    starcore::terminal_graphics::protocol::ServerMessage::Clipboard { text: url },
                 );
                 self.app.say("Copy link requested");
             }
@@ -57,9 +57,9 @@ impl Framework {
     }
     pub(super) fn handle_command(&mut self, id: &str) {
         let action = match id {
-            "kit.quit" => Some(Action::Quit),
-            "kit.help" => Some(Action::Help),
-            "kit.theme" => Some(Action::NextTheme),
+            "core.quit" => Some(Action::Quit),
+            "core.help" => Some(Action::Help),
+            "core.theme" => Some(Action::NextTheme),
             "focus-sources" => Some(Action::FocusSources),
             "focus-entries" => Some(Action::FocusEntries),
             "focus-reader" => Some(Action::FocusReader),
@@ -130,7 +130,7 @@ impl Framework {
         }
     }
     pub(super) fn build_commands(&self) -> Vec<UiCommand> {
-        let mut commands = starkit::ui::command::standard();
+        let mut commands = starcore::ui::command::standard();
         commands.extend(
             [
                 ("focus-sources", "Sources"),
@@ -179,14 +179,14 @@ impl Framework {
         let mut keys: Vec<_> = commands
             .iter()
             .flat_map(|command| command.shortcuts.iter())
-            .filter_map(|s| starkit::keymap::KeySpec::parse(s))
+            .filter_map(|s| starcore::keymap::KeySpec::parse(s))
             .collect();
         for (index, binding) in keymap::BINDINGS.iter().enumerate() {
             let mut command = UiCommand::new(format!("action-{index}"), binding.label)
                 .group(binding.group)
                 .enabled(self.supports_action(binding.action));
-            for spelling in starkit::keymap::alternatives(binding.keys) {
-                let Some(spec) = starkit::keymap::KeySpec::parse(spelling) else {
+            for spelling in starcore::keymap::alternatives(binding.keys) {
+                let Some(spec) = starcore::keymap::KeySpec::parse(spelling) else {
                     continue;
                 };
                 if keys.contains(&spec) {
@@ -201,10 +201,10 @@ impl Framework {
                     }
                     keys.push(spec);
                     let standard = match binding.action {
-                        Action::Help => Some("kit.help"),
-                        Action::Quit => Some("kit.quit"),
-                        Action::Redraw => Some("kit.repaint"),
-                        Action::NextTheme => Some("kit.theme"),
+                        Action::Help => Some("core.help"),
+                        Action::Quit => Some("core.quit"),
+                        Action::Redraw => Some("core.repaint"),
+                        Action::NextTheme => Some("core.theme"),
                         _ => None,
                     };
                     if let Some(id) = standard {

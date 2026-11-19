@@ -1,7 +1,7 @@
 //! A [`Doc`], a width and a theme in; the rows to draw out.
 //!
 //! The second stage of the reader. Every block is turned into
-//! `(String, Style)` runs, handed to `starkit::wrap::wrap_runs` and read
+//! `(String, Style)` runs, handed to `starcore::wrap::wrap_runs` and read
 //! back as `Line`s of `Span`s -- the same pipeline STAR/CORD's message list
 //! uses, and for the same reason: wrapping and drawing have to agree about
 //! where a cluster ended, and the only way to be sure they do is for one
@@ -57,10 +57,10 @@
 
 use std::collections::HashMap;
 
-use starkit::ratatui::style::{Modifier, Style};
-use starkit::ratatui::text::{Line, Span};
-use starkit::theme::color::Rgb;
-use starkit::wrap::{width_of, wrap_runs};
+use starcore::ratatui::style::{Modifier, Style};
+use starcore::ratatui::text::{Line, Span};
+use starcore::theme::color::Rgb;
+use starcore::wrap::{width_of, wrap_runs};
 
 use super::parse::{Align, Block, Doc, Inline, MAX_LIST_DEPTH};
 use crate::ui::panels::rgb;
@@ -786,14 +786,14 @@ impl<'a> Writer<'a> {
 
 /// Cut to `width` columns, and no padding.
 ///
-/// Not `starkit::text::fit`, which pads to exactly the width it is given:
+/// Not `starcore::text::fit`, which pads to exactly the width it is given:
 /// that is right for a whole row and wrong for a piece of one, and a padded
 /// piece is how a table cell comes out eighteen columns wider than the
 /// column it was measured for.
 fn clip(text: &str, width: u16) -> String {
     let mut out = String::new();
     let mut used = 0u16;
-    for (_, cluster) in starkit::wrap::clusters(text) {
+    for (_, cluster) in starcore::wrap::clusters(text) {
         let w = width_of(cluster);
         if used + w > width {
             break;

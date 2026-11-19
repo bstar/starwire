@@ -9,7 +9,7 @@
 //! Four decisions carry this file.
 //!
 //! **The bytes are hostile.** They arrived over a socket from the server
-//! whose page was just scraped. [`starkit::graphics::decode_limited`] reads
+//! whose page was just scraped. [`starcore::graphics::decode_limited`] reads
 //! the header and checks the declared size before a decoder is allowed to
 //! believe it: a four-hundred-byte PNG that says it is forty thousand pixels
 //! on a side would otherwise be six gigabytes of allocation on a thread the
@@ -47,8 +47,8 @@ use super::net::{Http, RequestOptions};
 /// The most bytes one picture may be. Above this it is not an illustration.
 pub const MAX_BYTES: u64 = 8 * 1024 * 1024;
 
-/// The largest picture worth decoding, on a side. STAR/KIT's own number.
-pub const MAX_DIMENSION: u32 = starkit::graphics::MAX_DIMENSION;
+/// The largest picture worth decoding, on a side. STAR/CORE's own number.
+pub const MAX_DIMENSION: u32 = starcore::graphics::MAX_DIMENSION;
 
 /// How many pictures are fetched at once.
 ///
@@ -82,7 +82,7 @@ const EXTENSIONS: &[&str] = &["png", "jpg", "webp", "gif", "bin"];
 #[derive(Clone)]
 pub struct Picture {
     /// The pixels, scaled down to the box that was asked for.
-    pub image: Arc<starkit::image::RgbaImage>,
+    pub image: Arc<starcore::image::RgbaImage>,
     /// The size on the wire, before any scaling. What the overlay's footer
     /// says and what the layout reserves rows from.
     pub natural: (u32, u32),
@@ -157,11 +157,11 @@ pub fn ext_for(content_type: Option<&str>, bytes: &[u8]) -> &'static str {
     if let Some(extension) = declared {
         return extension;
     }
-    match starkit::image::guess_format(bytes) {
-        Ok(starkit::image::ImageFormat::Png) => "png",
-        Ok(starkit::image::ImageFormat::Jpeg) => "jpg",
-        Ok(starkit::image::ImageFormat::WebP) => "webp",
-        Ok(starkit::image::ImageFormat::Gif) => "gif",
+    match starcore::image::guess_format(bytes) {
+        Ok(starcore::image::ImageFormat::Png) => "png",
+        Ok(starcore::image::ImageFormat::Jpeg) => "jpg",
+        Ok(starcore::image::ImageFormat::WebP) => "webp",
+        Ok(starcore::image::ImageFormat::Gif) => "gif",
         _ => "bin",
     }
 }
@@ -193,15 +193,16 @@ pub fn size_for(natural: (u32, u32), max_w: u32, max_h: u32) -> (u32, u32) {
 /// picture of every article as it is opened, downscaling is where a cheap
 /// filter is hardest to tell from an expensive one, and the sharpening
 /// filters ring on the hard edges a screenshot of text is made of.
-const SHRINK: starkit::image::imageops::FilterType = starkit::image::imageops::FilterType::Triangle;
+const SHRINK: starcore::image::imageops::FilterType =
+    starcore::image::imageops::FilterType::Triangle;
 
 /// Turn bytes into pixels no larger than `max_w` by `max_h`.
 pub fn decode(
     bytes: &[u8],
     max_w: u32,
     max_h: u32,
-) -> Result<(Arc<starkit::image::RgbaImage>, (u32, u32)), String> {
-    let decoded = starkit::graphics::decode_limited(bytes, MAX_DIMENSION)
+) -> Result<(Arc<starcore::image::RgbaImage>, (u32, u32)), String> {
+    let decoded = starcore::graphics::decode_limited(bytes, MAX_DIMENSION)
         .map_err(|e| format!("it could not be decoded: {e}"))?;
     let image = decoded.into_rgba8();
     let natural = image.dimensions();
@@ -212,7 +213,7 @@ pub fn decode(
     let image = if (w, h) == natural {
         image
     } else {
-        starkit::image::imageops::resize(&image, w, h, SHRINK)
+        starcore::image::imageops::resize(&image, w, h, SHRINK)
     };
     Ok((Arc::new(image), natural))
 }
@@ -273,7 +274,7 @@ pub fn fetch(
     let path = dir.and_then(|dir| {
         let extension = ext_for(response.content_type.as_deref(), &response.body);
         let path = dir.join(cache_name(url, extension));
-        match starkit::fs::write_atomic(&path, &response.body) {
+        match starcore::fs::write_atomic(&path, &response.body) {
             Ok(()) => Some(path),
             // A cache that cannot be written is a reader that fetches more
             // than it should, not a reader that cannot show a picture.
@@ -363,10 +364,10 @@ mod tests {
 
     fn png(w: u32, h: u32) -> Vec<u8> {
         let image =
-            starkit::image::RgbaImage::from_pixel(w, h, starkit::image::Rgba([9, 9, 9, 255]));
+            starcore::image::RgbaImage::from_pixel(w, h, starcore::image::Rgba([9, 9, 9, 255]));
         let mut out = std::io::Cursor::new(Vec::new());
-        starkit::image::DynamicImage::ImageRgba8(image)
-            .write_to(&mut out, starkit::image::ImageFormat::Png)
+        starcore::image::DynamicImage::ImageRgba8(image)
+            .write_to(&mut out, starcore::image::ImageFormat::Png)
             .expect("encoding a fixture picture");
         out.into_inner()
     }

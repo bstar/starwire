@@ -1,6 +1,6 @@
 //! STAR/WIRE's theme: the shared one, plus the roles a reader needs.
 //!
-//! The sixteen built-in theme files are STAR/KIT's and are shared with
+//! The sixteen built-in theme files are STAR/CORE's and are shared with
 //! STAR/AMP, STAR/CORD and STAR/FOLD. None of them says anything about a
 //! link in an article or a star on an entry, and they should not have to: a
 //! theme is eight colours and a base16 scheme, and everything else is
@@ -17,8 +17,8 @@
 use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
-use starkit::theme::color::Rgb;
-use starkit::theme::{pick, Registry, Resolve, Theme as Core, ThemeFile};
+use starcore::theme::color::Rgb;
+use starcore::theme::{pick, Registry, Resolve, Theme as Core, ThemeFile};
 
 /// The `[wire]` table, as a theme file may state it.
 ///
@@ -88,7 +88,7 @@ fn stated_or(stated: Option<Rgb>, derived: Rgb, against: Rgb, target: f64) -> Rg
 }
 
 impl Wire {
-    fn derive(core: &Core, f: &WireColors, b16: Option<&starkit::theme::schema::Base16>) -> Self {
+    fn derive(core: &Core, f: &WireColors, b16: Option<&starcore::theme::schema::Base16>) -> Self {
         let bg = core.panel_bg;
 
         // Every role names the base16 slot it comes from. The spec's own
@@ -179,7 +179,7 @@ impl Wire {
 /// The theme STAR/WIRE draws with: the shared one, plus `[wire]`.
 ///
 /// `Deref` rather than a hundred delegating accessors, so `theme.accent` and
-/// `theme.wire.link_fg` read the same way and every STAR/KIT widget takes
+/// `theme.wire.link_fg` read the same way and every STAR/CORE widget takes
 /// `&*theme`.
 #[derive(Debug, Clone)]
 pub struct Theme {
@@ -215,9 +215,9 @@ impl Resolve for Theme {
 }
 
 /// Where the themes come from: the same directory as the rest of
-/// STAR/WIRE's files, spelled with STAR/KIT's `Paths` because that is what
+/// STAR/WIRE's files, spelled with STAR/CORE's `Paths` because that is what
 /// [`Registry`] takes.
-pub const THEME_PATHS: starkit::paths::Paths = crate::paths::PATHS;
+pub const THEME_PATHS: starcore::paths::Paths = crate::paths::PATHS;
 
 pub fn registry() -> Registry<Theme> {
     Registry::new(THEME_PATHS)
@@ -230,7 +230,7 @@ pub mod tests_support {
     use super::{Resolve as _, Theme, ThemeFile};
 
     pub fn theme(id: &str) -> Theme {
-        let builtin = starkit::theme::builtin::BUILTINS
+        let builtin = starcore::theme::builtin::BUILTINS
             .iter()
             .find(|b| b.id == id)
             .unwrap_or_else(|| panic!("no built-in theme {id}"));
@@ -242,7 +242,7 @@ pub mod tests_support {
 mod tests {
     use super::tests_support::theme;
     use super::*;
-    use starkit::theme::builtin::BUILTINS;
+    use starcore::theme::builtin::BUILTINS;
 
     /// The test the whole derivation exists to pass.
     ///
@@ -261,7 +261,7 @@ mod tests {
         // sixteen known palettes can fail on. Skipped rather than faked
         // where no desktop theme is set, because a synthesised one would be
         // a seventeenth builtin with a misleading name.
-        if let Some((file, _)) = starkit::theme::system::theme() {
+        if let Some((file, _)) = starcore::theme::system::theme() {
             assert_legible("system", &Theme::resolve(&file));
         }
     }

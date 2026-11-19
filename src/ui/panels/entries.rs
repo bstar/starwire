@@ -10,12 +10,12 @@
 //! list every row would say the same thing, and a column of forty identical
 //! words is forty columns of headline given away for nothing.
 
-use starkit::chrome::frame::{self, Badge, Tone};
-use starkit::chrome::scrollbar;
-use starkit::ratatui::buffer::Buffer;
-use starkit::ratatui::layout::Rect;
-use starkit::ratatui::style::{Modifier, Style};
-use starkit::theme::color::Rgb;
+use starcore::chrome::frame::{self, Badge, Tone};
+use starcore::chrome::scrollbar;
+use starcore::ratatui::buffer::Buffer;
+use starcore::ratatui::layout::Rect;
+use starcore::ratatui::style::{Modifier, Style};
+use starcore::theme::color::Rgb;
 
 use super::{fit, rgb, width_of, words, ModuleId};
 use crate::ui::theme::Theme;
@@ -177,7 +177,7 @@ pub fn age(published: jiff::Timestamp, now: jiff::Timestamp) -> String {
 pub fn render(area: Rect, buf: &mut Buffer, v: &View<'_>, bars: &mut Bars) {
     let t = v.theme;
     let word_list = words(ModuleId::Entries);
-    let core: &starkit::theme::Theme = t;
+    let core: &starcore::theme::Theme = t;
     let badge = v.badge.as_ref().map(|(text, tone)| Badge {
         text: text.as_str(),
         tone: *tone,
@@ -238,11 +238,11 @@ fn render_crumb(area: Rect, buf: &mut Buffer, t: &Theme, v: &View<'_>) {
 
 fn render_list(area: Rect, buf: &mut Buffer, t: &Theme, v: &View<'_>) {
     if v.loading && v.rows.is_empty() {
-        starkit::chrome::empty(area, buf, t, "reading\u{2026}");
+        starcore::chrome::empty(area, buf, t, "reading\u{2026}");
         return;
     }
     if v.rows.is_empty() {
-        starkit::chrome::empty(area, buf, t, v.empty);
+        starcore::chrome::empty(area, buf, t, v.empty);
         return;
     }
     let cols = columns(area.width, v.aggregate);

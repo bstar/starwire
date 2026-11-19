@@ -8,11 +8,11 @@
 //!
 //! Everything under here reaches the four terminal crates -- the widget
 //! library, the terminal driver, and the two halves of the image pipeline --
-//! through `starkit::` rather than depending on any of them directly, which
+//! through `starcore::` rather than depending on any of them directly, which
 //! is what keeps one copy of each in the tree; `AGENTS.md` says why. The
 //! grep test at the bottom of this file is what holds the rule, and a line
 //! that has to name one of them outright exempts itself with the marker
-//! `VIA-STARKIT`, which is how the test's own list of forbidden strings, and
+//! `VIA-STARCORE`, which is how the test's own list of forbidden strings, and
 //! its name, get past it.
 //!
 //! The dependency runs one way only: this talks to the core through
@@ -39,7 +39,7 @@ pub mod stack;
 pub mod status;
 pub mod theme;
 
-/// One key per scrollbar the window can draw, shared with STAR/KIT's
+/// One key per scrollbar the window can draw, shared with STAR/CORE's
 /// `chrome::scrollbar::Scrollbars` so [`app::App`] can keep a single
 /// instance that presses, drags and releases whichever bar the pointer is
 /// over -- one of the three modules, or the one overlay tall enough to
@@ -55,7 +55,7 @@ pub enum Bar {
 
 /// The one `Scrollbars` every module records its bar with and the app's
 /// mouse handling reads back, keyed by [`Bar`].
-pub type Bars = starkit::chrome::scrollbar::Scrollbars<Bar>;
+pub type Bars = starcore::chrome::scrollbar::Scrollbars<Bar>;
 
 /// Take over the terminal and read the news.
 ///
@@ -75,12 +75,12 @@ pub fn run(
 mod tests {
     /// The rule `AGENTS.md` states and the compiler cannot: nothing under
     /// `src/ui/` names either of the two crates below except through
-    /// `starkit::`.
+    /// `starcore::`.
     ///
     /// A grep rather than a crate boundary, for the same reason as the
     /// core's own test: `starwire` is one binary crate, so there is no `ui`
     /// crate for Cargo to keep a second copy out of. The check is a
-    /// subtraction -- every `starkit::`-qualified mention is taken off the
+    /// subtraction -- every `starcore::`-qualified mention is taken off the
     /// line first, and whatever is left is a direct one. A line that has to
     /// name one outright carries the marker instead. The marker exempts the
     /// line it is on *and* the one after it, which is the only way an item
@@ -88,17 +88,17 @@ mod tests {
     /// rustfmt moves a comment trailing a signature onto the next line, so
     /// the marker has to go above it.
     #[test]
-    // VIA-STARKIT
+    // VIA-STARCORE
     fn nothing_under_ui_names_ratatui_or_crossterm_directly() {
         const THROUGH: &[&str] = &[
-            "starkit::ratatui_image", // VIA-STARKIT
-            "starkit::ratatui",       // VIA-STARKIT
-            "starkit::crossterm",     // VIA-STARKIT
-            "starkit::image",         // VIA-STARKIT
+            "starcore::ratatui_image", // VIA-STARCORE
+            "starcore::ratatui",       // VIA-STARCORE
+            "starcore::crossterm",     // VIA-STARCORE
+            "starcore::image",         // VIA-STARCORE
         ];
         const FORBIDDEN: &[&str] = &[
-            "ratatui",   // VIA-STARKIT
-            "crossterm", // VIA-STARKIT
+            "ratatui",   // VIA-STARCORE
+            "crossterm", // VIA-STARCORE
         ];
 
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -117,8 +117,8 @@ mod tests {
             };
             let mut exempt_next = false;
             for (number, line) in text.lines().enumerate() {
-                let exempt = exempt_next || line.contains("VIA-STARKIT");
-                exempt_next = line.contains("VIA-STARKIT");
+                let exempt = exempt_next || line.contains("VIA-STARCORE");
+                exempt_next = line.contains("VIA-STARCORE");
                 if exempt {
                     continue;
                 }
@@ -145,7 +145,7 @@ mod tests {
         );
         assert!(
             offences.is_empty(),
-            "the window reached past starkit:\n{}",
+            "the window reached past starcore:\n{}",
             offences.join("\n")
         );
     }

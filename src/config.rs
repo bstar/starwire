@@ -220,7 +220,7 @@ impl Config {
         if path.exists() {
             return Ok(false);
         }
-        starkit::fs::write_atomic(path, TEMPLATE.as_bytes())
+        starcore::fs::write_atomic(path, TEMPLATE.as_bytes())
             .with_context(|| format!("writing {}", path.display()))?;
         Ok(true)
     }

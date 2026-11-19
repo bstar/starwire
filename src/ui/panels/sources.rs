@@ -12,12 +12,12 @@
 //! draws above its list, minus the cursor's name, so folding a module does
 //! not change what it says about itself.
 
-use starkit::chrome::frame::{self, Badge, Tone};
-use starkit::chrome::scrollbar;
-use starkit::ratatui::buffer::Buffer;
-use starkit::ratatui::layout::Rect;
-use starkit::ratatui::style::{Modifier, Style};
-use starkit::theme::color::Rgb;
+use starcore::chrome::frame::{self, Badge, Tone};
+use starcore::chrome::scrollbar;
+use starcore::ratatui::buffer::Buffer;
+use starcore::ratatui::layout::Rect;
+use starcore::ratatui::style::{Modifier, Style};
+use starcore::theme::color::Rgb;
 
 use super::{fit, rgb, width_of, words, ModuleId};
 use crate::ui::theme::Theme;
@@ -191,7 +191,7 @@ pub fn render(area: Rect, buf: &mut Buffer, v: &View<'_>, bars: &mut Bars) {
     let word_list = words(ModuleId::Sources);
     // The core theme type -- a struct literal is not a coercion site, so the
     // deref from this crate's own `Theme` is spelled out here.
-    let core: &starkit::theme::Theme = t;
+    let core: &starcore::theme::Theme = t;
     let body = frame::frame(
         area,
         buf,
@@ -283,11 +283,11 @@ fn kind_fg(t: &Theme, row: &SourceRow) -> Rgb {
 
 fn render_list(area: Rect, buf: &mut Buffer, t: &Theme, v: &View<'_>) {
     if v.loading {
-        starkit::chrome::empty(area, buf, t, "reading\u{2026}");
+        starcore::chrome::empty(area, buf, t, "reading\u{2026}");
         return;
     }
     if v.rows.is_empty() {
-        starkit::chrome::empty(area, buf, t, "no feeds yet \u{2014} a adds one");
+        starcore::chrome::empty(area, buf, t, "no feeds yet \u{2014} a adds one");
         return;
     }
     for (i, row) in v

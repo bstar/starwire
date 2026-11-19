@@ -1,6 +1,6 @@
 //! Where STAR/WIRE keeps its files.
 //!
-//! A name for [`starkit::paths::Paths`], and nothing else -- the layout
+//! A name for [`starcore::paths::Paths`], and nothing else -- the layout
 //! itself is documented there: everything under one directory,
 //! `~/.local/starwire` by default, rather than scattered across the three
 //! XDG roots, so the config, the database, the session and the log can be
@@ -16,7 +16,7 @@
 // and there is not one -- but it is part of the paths vocabulary this file
 // exists to name.
 #[allow(unused_imports)]
-pub use starkit::paths::{own_dir, Paths};
+pub use starcore::paths::{own_dir, Paths};
 
 /// This application's directories. `$STARWIRE_DIR` moves everything;
 /// `$STARWIRE_CONFIG_DIR` moves only the configuration, which is what a
@@ -36,7 +36,7 @@ pub fn db_file() -> anyhow::Result<std::path::PathBuf> {
 mod tests {
     use super::*;
 
-    /// STAR/KIT's own tests cover the layout; what is worth asserting here is
+    /// STAR/CORE's own tests cover the layout; what is worth asserting here is
     /// that this application's own three strings reach it -- an environment
     /// variable spelled for another program would relocate nothing.
     #[test]

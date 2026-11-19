@@ -55,33 +55,33 @@ jobs:
       LIBGL_ALWAYS_SOFTWARE: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Read the locked KIT fixture revision
-        id: kit
+      - name: Read the locked CORE fixture revision
+        id: core
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import tomllib
           with open('Cargo.lock', 'rb') as source:
               packages = tomllib.load(source)['package']
-          kit = next(package for package in packages if package['name'] == 'starkit')
-          print('revision=' + kit['source'].rsplit('#', 1)[1])
+          core = next(package for package in packages if package['name'] == 'starcore')
+          print('revision=' + core['source'].rsplit('#', 1)[1])
           PY
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          repository: bstar/starkit
-          ref: ${{ steps.kit.outputs.revision }}
-          path: .kit-fixture
+          repository: bstar/starcore
+          ref: ${{ steps.core.outputs.revision }}
+          path: .core-fixture
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - name: Install private terminal test runtime
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg xvfb libgl1-mesa-dri libegl1 libxcb-xkb1 libxkbcommon-x11-0 libxcb-cursor0
-          bash .kit-fixture/scripts/install-test-kitty.sh "$RUNNER_TEMP/kitty-proof"
+          bash .core-fixture/scripts/install-test-kitty.sh "$RUNNER_TEMP/kitty-proof"
       - run: cargo build --locked
       - name: Verify graphical and cell reader workflows in Kitty
         run: |
           xvfb-run -a python3 scripts/test-graphical-ui.py \
-            --kit .kit-fixture \
+            --core .core-fixture \
             --kitty "$RUNNER_TEMP/kitty-proof/runtime/bin/kitty" \
             --kitten "$RUNNER_TEMP/kitty-proof/runtime/bin/kitten" \
             --binary target/debug/starwire \

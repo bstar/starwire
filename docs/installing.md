@@ -55,7 +55,7 @@ cd starwire
 cargo build --release
 ```
 
-Rust 1.90 or newer. STAR/KIT is a git dependency, so the first build needs
+Rust 1.90 or newer. STAR/CORE is a git dependency, so the first build needs
 network access; `CARGO_NET_GIT_FETCH_WITH_CLI=true` is what makes cargo fetch
 it with the `git` on your `PATH`, which matters if you rewrite GitHub URLs to
 ssh.

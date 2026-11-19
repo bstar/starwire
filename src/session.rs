@@ -71,7 +71,7 @@ impl Session {
     /// ordering problem to pay for it with.
     pub fn save(&self, path: &Path) -> Result<()> {
         let text = toml::to_string(self).context("serialising the session")?;
-        starkit::fs::write_atomic(path, text.as_bytes())
+        starcore::fs::write_atomic(path, text.as_bytes())
             .with_context(|| format!("writing {}", path.display()))
     }
 

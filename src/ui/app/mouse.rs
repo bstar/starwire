@@ -10,8 +10,8 @@
 //! panel's own `hit` answers against the same split its `render` drew from,
 //! which is why a click cannot land on a row that was not there.
 
-use starkit::chrome::header;
-use starkit::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+use starcore::chrome::header;
+use starcore::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 use crate::ui::keymap::Action;
 use crate::ui::layout::Regions;
@@ -89,7 +89,7 @@ impl App {
                 };
                 let height = self.bars.track_of(bar).map(|r| r.height).unwrap_or(0);
                 let len = self.rows_of(m);
-                let cursor = starkit::list::cursor_into_view(
+                let cursor = starcore::list::cursor_into_view(
                     self.stack.frames()[i].cursor,
                     above,
                     usize::from(height),

@@ -17,7 +17,7 @@
 //! ```
 //!
 //! Every module is always there, in the order the feed list is drilled
-//! through. The app supplies reader/peek policy; KIT's responsive pane tree
+//! through. The app supplies reader/peek policy; CORE's responsive pane tree
 //! owns allocation, collapse reasons, shared hit geometry and focus traversal.
 //!
 //! ## Who gets the spare rows
@@ -44,9 +44,9 @@
 //! There is no degradation ladder. Below [`MIN_COLS`] or [`MIN_ROWS`] the
 //! caller draws one line saying so, in `theme.error`.
 
-use starkit::chrome::header;
-use starkit::panes::{self, Focus, Node, Size, Visibility};
-use starkit::ratatui::layout::Rect;
+use starcore::chrome::header;
+use starcore::panes::{self, Focus, Node, Size, Visibility};
+use starcore::ratatui::layout::Rect;
 
 use super::panels::{ModuleId, COLUMN};
 

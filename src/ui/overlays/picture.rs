@@ -13,7 +13,7 @@
 //! size it happened to be, which is most of what a news article carries and
 //! is the one thing somebody who opened this was asking for. So the
 //! rectangle is measured in *pixels*, through
-//! [`Graphics::cell_size`](starkit::graphics::Graphics::cell_size): the
+//! [`Graphics::cell_size`](starcore::graphics::Graphics::cell_size): the
 //! pixels are scaled to exactly the size of the rectangle they will be
 //! placed over, and the footer says `\u{d7}2.4` when they were. This is
 //! STAR/CORD's media viewer, and deliberately the same arithmetic, so the
@@ -34,14 +34,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use starkit::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use starkit::graphics::ImageId;
-use starkit::image::RgbaImage;
-use starkit::ratatui::buffer::Buffer;
-use starkit::ratatui::layout::Rect;
-use starkit::ratatui::style::{Modifier, Style};
-use starkit::ratatui::text::{Line, Span};
-use starkit::ratatui::widgets::{Block, BorderType, Borders, Clear, Widget};
+use starcore::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use starcore::graphics::ImageId;
+use starcore::image::RgbaImage;
+use starcore::ratatui::buffer::Buffer;
+use starcore::ratatui::layout::Rect;
+use starcore::ratatui::style::{Modifier, Style};
+use starcore::ratatui::text::{Line, Span};
+use starcore::ratatui::widgets::{Block, BorderType, Borders, Clear, Widget};
 
 use crate::ui::panels::{fit, rgb};
 use crate::ui::pictures;
@@ -56,8 +56,8 @@ use crate::wire::PictureState;
 /// pictures are as often a chart or a screenshot of a terminal as a
 /// photograph, and a halo around every letter is the worse of the two
 /// failures.
-const SMOOTH: starkit::image::imageops::FilterType =
-    starkit::image::imageops::FilterType::CatmullRom;
+const SMOOTH: starcore::image::imageops::FilterType =
+    starcore::image::imageops::FilterType::CatmullRom;
 
 /// One of the article's pictures, as the overlay knows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,7 +169,7 @@ impl Picture {
             };
         }
         let started = std::time::Instant::now();
-        let image = Arc::new(starkit::image::imageops::resize(
+        let image = Arc::new(starcore::image::imageops::resize(
             &**source, pixels.0, pixels.1, SMOOTH,
         ));
         tracing::debug!(
@@ -309,7 +309,7 @@ pub fn render(
         .title(Span::styled(
             format!(
                 "{}PICTURE \u{b7} {counter} ",
-                starkit::chrome::frame::TITLE_LEAD
+                starcore::chrome::frame::TITLE_LEAD
             ),
             Style::default()
                 .fg(rgb(theme.header_fg))
@@ -427,7 +427,7 @@ mod tests {
             image: Arc::new(RgbaImage::from_pixel(
                 w,
                 h,
-                starkit::image::Rgba([10, 20, 30, 255]),
+                starcore::image::Rgba([10, 20, 30, 255]),
             )),
             natural: (w, h),
             path: None,
