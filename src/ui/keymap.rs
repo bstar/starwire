@@ -65,9 +65,9 @@
 use std::sync::LazyLock;
 
 use starcore::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use starcore::keymap::{Binding as KitBinding, Keymap, MouseHelp};
+use starcore::keymap::{Binding as CoreBinding, Keymap, MouseHelp};
 
-pub type Binding = KitBinding<Action>;
+pub type Binding = CoreBinding<Action>;
 
 /// Everything the window can be asked to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
