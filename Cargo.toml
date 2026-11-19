@@ -115,7 +115,7 @@ url = "2"
 # library, for STAR/AMP's reason: one known version, FTS5 guaranteed to be
 # compiled in, and no distribution's SQLite old enough to lack
 # `external content` tables. FTS5 is what `db/articles.rs::search` is.
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 
 # OPML import and export, which is how a feed list moves between readers.
 # A parser rather than string formatting, because an exported list has to

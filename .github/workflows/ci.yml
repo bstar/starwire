@@ -30,8 +30,9 @@ jobs:
       # `rusqlite`'s `bundled` feature carries, TLS is rustls through `ureq`,
       # and nothing runs bindgen, so there is nothing to apt-get. Adding a
       # `-sys` crate means adding a step here.
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # pinned below to match the Nix devshell
         with:
+          toolchain: "1.98.1"
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # First, and cheap: Cargo.toml and Cargo.lock must agree.
@@ -71,6 +72,8 @@ jobs:
           ref: ${{ steps.core.outputs.revision }}
           path: .core-fixture
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: "1.98.1"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - name: Install private terminal test runtime
         run: |
@@ -97,14 +100,15 @@ jobs:
   # opener that is `open` there and `xdg-open` everywhere else -- so a build
   # is most of the value.
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Still nothing to install. The bundled SQLite compiles against the
       # SDK the runner already has, so there is no Homebrew line and no
       # LIBCLANG_PATH to set.
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # pinned below to match the Nix devshell
         with:
+          toolchain: "1.98.1"
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo clippy --all-targets -- -D warnings -A dead_code
